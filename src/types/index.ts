@@ -6,7 +6,22 @@
 // LLM CONFIGURATION
 // =============================================================================
 
-export type LLMProvider = 'openrouter' | 'venice' | 'anthropic' | 'openai' | 'xai' | 'gemini' | 'litellm' | 'deepseek' | 'huggingface' | 'nanogpt' | 'novita' | 'codex' | 'mock' | 'local' | 'local-agent';
+export type LLMProvider =
+  | "openrouter"
+  | "venice"
+  | "anthropic"
+  | "openai"
+  | "xai"
+  | "gemini"
+  | "litellm"
+  | "deepseek"
+  | "huggingface"
+  | "nanogpt"
+  | "novita"
+  | "codex"
+  | "mock"
+  | "local"
+  | "local-agent";
 
 export interface LLMConfig {
   provider: LLMProvider;
@@ -46,7 +61,7 @@ export interface FallbackEntry {
 }
 
 export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
   /** Tool calls requested by the assistant */
   toolCalls?: LLMToolCall[];
@@ -78,21 +93,27 @@ export interface LLMToolDefinition {
   name: string;
   description: string;
   parameters: {
-    type: 'object';
-    properties: Record<string, {
-      type: string;
-      description?: string;
-      enum?: string[];
-      items?: { type: string };
-      default?: unknown;
-      properties?: Record<string, {
+    type: "object";
+    properties: Record<
+      string,
+      {
         type: string;
         description?: string;
         enum?: string[];
-      }>;
-      required?: string[];
-      additionalProperties?: boolean;
-    }>;
+        items?: { type: string };
+        default?: unknown;
+        properties?: Record<
+          string,
+          {
+            type: string;
+            description?: string;
+            enum?: string[];
+          }
+        >;
+        required?: string[];
+        additionalProperties?: boolean;
+      }
+    >;
     required?: string[];
   };
 }
@@ -109,22 +130,17 @@ export interface LLMToolCall {
 // =============================================================================
 
 export type OperatorArchetype =
-  | 'recon'
-  | 'scanner'
-  | 'exploiter'
-  | 'infiltrator'
-  | 'exfiltrator'
-  | 'ghost'
-  | 'coordinator'
-  | 'analyst';
+  | "recon"
+  | "scanner"
+  | "exploiter"
+  | "infiltrator"
+  | "exfiltrator"
+  | "ghost"
+  | "coordinator"
+  | "analyst";
 
 export type OperatorStatus =
-  | 'idle'
-  | 'tasked'
-  | 'executing'
-  | 'cooldown'
-  | 'burned'
-  | 'exfiltrated';
+  "idle" | "tasked" | "executing" | "cooldown" | "burned" | "exfiltrated";
 
 export interface OperatorState {
   status: OperatorStatus;
@@ -151,13 +167,13 @@ export interface OperatorConfig {
 // =============================================================================
 
 export enum KillChainPhase {
-  RECON = 'reconnaissance',
-  WEAPONIZE = 'weaponization',
-  DELIVER = 'delivery',
-  EXPLOIT = 'exploitation',
-  INSTALL = 'installation',
-  C2 = 'command_and_control',
-  ACTIONS = 'actions_on_objectives',
+  RECON = "reconnaissance",
+  WEAPONIZE = "weaponization",
+  DELIVER = "delivery",
+  EXPLOIT = "exploitation",
+  INSTALL = "installation",
+  C2 = "command_and_control",
+  ACTIONS = "actions_on_objectives",
 }
 
 // =============================================================================
@@ -165,30 +181,26 @@ export enum KillChainPhase {
 // =============================================================================
 
 export type TargetType =
-  | 'web_application'
-  | 'api'
-  | 'network'
-  | 'host'
-  | 'database'
-  | 'cloud'
-  | 'mobile'
-  | 'iot'
-  | 'container';
+  | "web_application"
+  | "api"
+  | "network"
+  | "host"
+  | "database"
+  | "cloud"
+  | "mobile"
+  | "iot"
+  | "container";
 
 export type TargetZone =
-  | 'external'
-  | 'dmz'
-  | 'internal'
-  | 'restricted'
-  | 'airgapped';
+  "external" | "dmz" | "internal" | "restricted" | "airgapped";
 
 export type TargetStatus =
-  | 'discovered'
-  | 'scanning'
-  | 'vulnerable'
-  | 'exploited'
-  | 'owned'
-  | 'exfiltrated';
+  | "discovered"
+  | "scanning"
+  | "vulnerable"
+  | "exploited"
+  | "owned"
+  | "exfiltrated";
 
 export interface Target {
   id: string;
@@ -221,7 +233,7 @@ export interface Service {
 // FINDING TYPES
 // =============================================================================
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Finding {
   id: string;
@@ -241,14 +253,26 @@ export interface Finding {
   verifiedAt?: number;
   exploitedAt?: number;
   /** Result of the live verification gate — present once verifyFinding() has run. */
-  verifyGate?: { passed: boolean; provenance: 'none' | 'context' | 'tool'; reasons: string[]; checkedAt: number };
+  verifyGate?: {
+    passed: boolean;
+    provenance: "none" | "context" | "tool";
+    reasons: string[];
+    checkedAt: number;
+  };
   /** Original severity asserted by the model before the provenance cap downgraded
    *  `severity` for unverified findings (none=low, context=medium, tool=unchanged). */
   assertedSeverity?: Severity;
 }
 
 export interface Evidence {
-  type: 'screenshot' | 'log' | 'request' | 'response' | 'file' | 'command' | 'output';
+  type:
+    | "screenshot"
+    | "log"
+    | "request"
+    | "response"
+    | "file"
+    | "command"
+    | "output";
   content: string;
   timestamp: number;
   metadata?: Record<string, unknown>;
@@ -277,14 +301,14 @@ export interface Vulnerability {
 // =============================================================================
 
 export type CredentialType =
-  | 'password'
-  | 'hash'
-  | 'token'
-  | 'api_key'
-  | 'ssh_key'
-  | 'certificate'
-  | 'session'
-  | 'cookie';
+  | "password"
+  | "hash"
+  | "token"
+  | "api_key"
+  | "ssh_key"
+  | "certificate"
+  | "session"
+  | "cookie";
 
 export interface Credential {
   id: string;
@@ -296,7 +320,7 @@ export interface Credential {
   source: string;
   discoveredAt: number;
   validatedAt?: number;
-  privilegeLevel?: 'user' | 'admin' | 'system' | 'root';
+  privilegeLevel?: "user" | "admin" | "system" | "root";
 }
 
 // =============================================================================
@@ -310,7 +334,7 @@ export interface Mission {
   objectives: string[];
   phases: KillChainPhase[];
   rules: RulesOfEngagement;
-  status: 'planning' | 'active' | 'paused' | 'completed' | 'aborted';
+  status: "planning" | "active" | "paused" | "completed" | "aborted";
   startedAt?: number;
   completedAt?: number;
   currentPhase: KillChainPhase;
@@ -334,7 +358,8 @@ export interface Task {
   description: string;
   phase: KillChainPhase;
   operatorType: OperatorArchetype;
-  status: 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+  status:
+    "pending" | "assigned" | "in_progress" | "completed" | "failed" | "skipped";
   priority: number;
   dependencies: string[];
   assignedTo?: string;
@@ -357,7 +382,7 @@ export interface TaskResult {
 // OPSEC TYPES
 // =============================================================================
 
-export type OpsecLevel = 'silent' | 'covert' | 'loud';
+export type OpsecLevel = "silent" | "covert" | "loud";
 
 export interface OpsecConfig {
   level: OpsecLevel;
@@ -372,7 +397,7 @@ export interface OpsecConfig {
 
 export interface DetectionEvent {
   id: string;
-  type: 'waf' | 'ids' | 'edr' | 'siem' | 'honeypot' | 'manual' | 'unknown';
+  type: "waf" | "ids" | "edr" | "siem" | "honeypot" | "manual" | "unknown";
   severity: Severity;
   source: string;
   description: string;
@@ -391,8 +416,8 @@ export interface Message {
   from: string;
   to: string | string[];
   channel: string;
-  type: 'intel' | 'task' | 'alert' | 'status' | 'finding' | 'coordination';
-  priority: 'low' | 'normal' | 'high' | 'critical';
+  type: "intel" | "task" | "alert" | "status" | "finding" | "coordination";
+  priority: "low" | "normal" | "high" | "critical";
   content: string;
   metadata?: Record<string, unknown>;
   timestamp: number;
@@ -405,15 +430,21 @@ export interface Message {
 /** A tool's risk tier — the catalog's `risk` vocabulary. Drives the approval + spicy-warning gate
  *  (see src/arsenal/approval.ts): intrusive/credential/dangerous require approval; credential/dangerous
  *  additionally fire a loud warning. Absent/safe/active tools are ungated. */
-export type RiskTier = 'local_read' | 'passive' | 'active' | 'intrusive' | 'credential' | 'dangerous';
+export type RiskTier =
+  | "local_read"
+  | "passive"
+  | "active"
+  | "intrusive"
+  | "credential"
+  | "dangerous";
 
 /** Structured error categories for tool failures — enables LLM feedback without leaking internals. */
 export enum ToolErrorCategory {
-  ScopeDenied = 'scope_denied',
-  ToolNotFound = 'tool_not_found',
-  Timeout = 'timeout',
-  ExecutionError = 'execution_error',
-  ValidationError = 'validation_error',
+  ScopeDenied = "scope_denied",
+  ToolNotFound = "tool_not_found",
+  Timeout = "timeout",
+  ExecutionError = "execution_error",
+  ValidationError = "validation_error",
 }
 
 /** Structured error thrown by tool execution — carries category for LLM feedback and optional tool name. */
@@ -424,7 +455,7 @@ export class ToolError extends Error {
     public readonly toolName?: string,
   ) {
     super(message);
-    this.name = 'ToolError';
+    this.name = "ToolError";
   }
 }
 
@@ -441,7 +472,7 @@ export interface CustomTool {
 
 export interface ToolParameter {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
+  type: "string" | "number" | "boolean" | "array" | "object";
   description: string;
   required: boolean;
   default?: unknown;
@@ -478,22 +509,27 @@ export interface ToolContext {
  * Simplified finding for tool results (tools don't have full context)
  */
 export interface ToolFinding {
-title: string;
-severity: Severity;
-details: string;
-cvss?: number;
-cve?: string[];
-cwe?: string[];
-remediation?: string;
-/** Optional machine evidence attached at the tool boundary (e.g. browser screenshots). */
-evidence?: { type: 'screenshot' | 'output' | 'request' | 'response'; content: string; timestamp: number; metadata?: Record<string, unknown> }[];
+  title: string;
+  severity: Severity;
+  details: string;
+  cvss?: number;
+  cve?: string[];
+  cwe?: string[];
+  remediation?: string;
+  /** Optional machine evidence attached at the tool boundary (e.g. browser screenshots). */
+  evidence?: {
+    type: "screenshot" | "output" | "request" | "response";
+    content: string;
+    timestamp: number;
+    metadata?: Record<string, unknown>;
+  }[];
   /**
    * How this finding was produced — the provenance flag the honesty gate keys on:
    *  'tool'  = parsed from real tool output (has provenance, can be verified)
    *  'model' = asserted by the model in its debrief prose (NO provenance — the gate
    *            records it but refuses to mark it verified; prose is not evidence).
    */
-  provenance?: 'tool' | 'model';
+  provenance?: "tool" | "model";
   /** For 'tool' provenance: the tool that produced it + the raw output backing the claim. */
   toolName?: string;
   toolOutput?: string;
@@ -528,10 +564,19 @@ export interface TempestConfig {
 }
 
 export interface RuntimeHooks {
-  onOperatorSpawned?: (operator: { id: string; archetype: OperatorArchetype }) => void;
-  onOperatorStateChange?: (operator: { id: string }, newState: OperatorState) => void;
+  onOperatorSpawned?: (operator: {
+    id: string;
+    archetype: OperatorArchetype;
+  }) => void;
+  onOperatorStateChange?: (
+    operator: { id: string },
+    newState: OperatorState,
+  ) => void;
   onFindingDiscovered?: (finding: Finding, operator: { id: string }) => void;
-  onCredentialHarvested?: (credential: Credential, operator: { id: string }) => void;
+  onCredentialHarvested?: (
+    credential: Credential,
+    operator: { id: string },
+  ) => void;
   onDetectionEvent?: (event: DetectionEvent) => void;
   onMissionPhaseChange?: (missionId: string, phase: KillChainPhase) => void;
   onTaskCompleted?: (task: Task) => void;
@@ -544,7 +589,7 @@ export interface RuntimeHooks {
 export interface Report {
   id: string;
   missionId: string;
-  type: 'executive' | 'technical' | 'full_report' | 'findings_only';
+  type: "executive" | "technical" | "full_report" | "findings_only";
   generatedAt: number;
   summary: ExecutiveSummary;
   findings: Finding[];
@@ -578,11 +623,11 @@ export interface AttackPath {
 export interface Recommendation {
   id: string;
   findingId?: string;
-  priority: 'immediate' | 'short_term' | 'long_term';
+  priority: "immediate" | "short_term" | "long_term";
   title: string;
   description: string;
-  effort: 'low' | 'medium' | 'high';
-  impact: 'low' | 'medium' | 'high';
+  effort: "low" | "medium" | "high";
+  impact: "low" | "medium" | "high";
 }
 
 export interface Appendix {
@@ -597,36 +642,42 @@ export interface Appendix {
 export interface ScanProgressEvent {
   id: string;
   timestamp: number;
-  kind: 'task_started' | 'thinking' | 'tool_call' | 'tool_result' | 'task_completed' | 'task_failed';
+  kind:
+    | "task_started"
+    | "thinking"
+    | "tool_call"
+    | "tool_result"
+    | "task_completed"
+    | "task_failed";
   operatorId: string;
   callsign: string;
   archetype: OperatorArchetype;
   taskId?: string;
   taskName?: string;
   toolName?: string;
-  source?: 'agent' | 'backend_seeded';
+  source?: "agent" | "backend_seeded";
   detail: string;
   success?: boolean;
 }
 
 export interface CommandEvents {
-  'command:started': void;
-  'command:stopped': void;
-  'command:paused': void;
-  'command:resumed': void;
-  'tick': number;
-  'operator:spawned': { id: string; archetype: OperatorArchetype };
-  'operator:burned': { id: string };
-  'finding:discovered': { finding: Finding; operatorId: string };
-  'credential:harvested': { credential: Credential; operatorId: string };
-  'target:owned': { target: Target; operatorId: string };
-  'detection:triggered': DetectionEvent;
-  'mission:phase_changed': { missionId: string; phase: KillChainPhase };
-  'scan:progress': ScanProgressEvent;
-  'abort:recommended': string;
+  "command:started": void;
+  "command:stopped": void;
+  "command:paused": void;
+  "command:resumed": void;
+  tick: number;
+  "operator:spawned": { id: string; archetype: OperatorArchetype };
+  "operator:burned": { id: string };
+  "finding:discovered": { finding: Finding; operatorId: string };
+  "credential:harvested": { credential: Credential; operatorId: string };
+  "target:owned": { target: Target; operatorId: string };
+  "detection:triggered": DetectionEvent;
+  "mission:phase_changed": { missionId: string; phase: KillChainPhase };
+  "scan:progress": ScanProgressEvent;
+  "abort:recommended": string;
   /** A capability-approval gate decision (allowed/denied) on an intrusive/dangerous tool — bridged to
    *  the dashboard's live approval/audit feed. Structural match for arsenal/approval.ts ApprovalRecord. */
-  'approval:decision': {
+  "approval:decision": {
     tool: string;
     risk: RiskTier;
     operator?: string;
@@ -646,6 +697,10 @@ export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
-export type RequireAtLeastOne<T, Keys extends keyof T = keyof T> =
-  Pick<T, Exclude<keyof T, Keys>> &
-  { [K in Keys]-?: Required<Pick<T, K>> & Partial<Pick<T, Exclude<Keys, K>>> }[Keys];
+export type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Pick<
+  T,
+  Exclude<keyof T, Keys>
+> &
+  {
+    [K in Keys]-?: Required<Pick<T, K>> & Partial<Pick<T, Exclude<Keys, K>>>;
+  }[Keys];

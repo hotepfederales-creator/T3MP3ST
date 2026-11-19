@@ -5,9 +5,9 @@
  * Each operator is specialized for a specific phase of the kill chain.
  */
 
-import { EventEmitter } from 'eventemitter3';
-import { randomUUID } from 'crypto';
-import type { PackBoard } from '../pack/board.js';
+import { EventEmitter } from "eventemitter3";
+import { randomUUID } from "crypto";
+import type { PackBoard } from "../pack/board.js";
 import {
   KillChainPhase,
   type OperatorArchetype,
@@ -18,17 +18,17 @@ import {
   type Credential,
   type Task,
   type TaskResult,
-} from '../types/index.js';
-import type { LLMBackbone } from '../llm/index.js';
-import type { Arsenal } from '../arsenal/index.js';
-import type { AgentLoop } from '../agent/index.js';
-import type { ToolResult } from '../types/index.js';
-import type { Target } from '../types/index.js';
-import { resolveSystemPrompt } from '../prompts/index.js';
-import { gateLiveFinding } from '../evidence/gate.js';
-import { SEVERITY_SCORES } from '../evidence/index.js';
-import type { Severity } from '../types/index.js';
-import { diagnoseOperatorCapabilities } from './capability-diagnostics.js';
+} from "../types/index.js";
+import type { LLMBackbone } from "../llm/index.js";
+import type { Arsenal } from "../arsenal/index.js";
+import type { AgentLoop } from "../agent/index.js";
+import type { ToolResult } from "../types/index.js";
+import type { Target } from "../types/index.js";
+import { resolveSystemPrompt } from "../prompts/index.js";
+import { gateLiveFinding } from "../evidence/gate.js";
+import { SEVERITY_SCORES } from "../evidence/index.js";
+import type { Severity } from "../types/index.js";
+import { diagnoseOperatorCapabilities } from "./capability-diagnostics.js";
 
 // ── Phase-based model routing (opt-in) ───────────────────────────────────────
 // Env per phase: T3MP3ST_MODEL_RECON / _SCAN / _EXPLOIT / _POST / _ANALYSIS.
@@ -36,20 +36,21 @@ import { diagnoseOperatorCapabilities } from './capability-diagnostics.js';
 // there and a strong model only to exploit/analysis cuts cost 2-3x at the same
 // deep-phase quality. Unset vars keep the operator's configured model.
 const PHASE_MODEL_ENV: Record<string, string> = {
-  [KillChainPhase.RECON]: 'T3MP3ST_MODEL_RECON',
-  [KillChainPhase.WEAPONIZE]: 'T3MP3ST_MODEL_SCAN',
-  [KillChainPhase.DELIVER]: 'T3MP3ST_MODEL_SCAN',
-  [KillChainPhase.EXPLOIT]: 'T3MP3ST_MODEL_EXPLOIT',
-  [KillChainPhase.INSTALL]: 'T3MP3ST_MODEL_POST',
-  [KillChainPhase.C2]: 'T3MP3ST_MODEL_POST',
-  [KillChainPhase.ACTIONS]: 'T3MP3ST_MODEL_POST',
-  ANALYSIS: 'T3MP3ST_MODEL_ANALYSIS',
+  [KillChainPhase.RECON]: "T3MP3ST_MODEL_RECON",
+  [KillChainPhase.WEAPONIZE]: "T3MP3ST_MODEL_SCAN",
+  [KillChainPhase.DELIVER]: "T3MP3ST_MODEL_SCAN",
+  [KillChainPhase.EXPLOIT]: "T3MP3ST_MODEL_EXPLOIT",
+  [KillChainPhase.INSTALL]: "T3MP3ST_MODEL_POST",
+  [KillChainPhase.C2]: "T3MP3ST_MODEL_POST",
+  [KillChainPhase.ACTIONS]: "T3MP3ST_MODEL_POST",
+  ANALYSIS: "T3MP3ST_MODEL_ANALYSIS",
 };
 
 /** Resolve the LLM to drive a task of this phase; base itself when unconfigured. */
 function routeModelForPhase(phase: string, base: LLMBackbone): LLMBackbone {
-  const envName = PHASE_MODEL_ENV[phase] ?? PHASE_MODEL_ENV[KillChainPhase.RECON];
-  const model = (process.env[envName] ?? '').trim();
+  const envName =
+    PHASE_MODEL_ENV[phase] ?? PHASE_MODEL_ENV[KillChainPhase.RECON];
+  const model = (process.env[envName] ?? "").trim();
   if (!model) return base;
   return base.withModel(model);
 }
@@ -59,27 +60,40 @@ function routeModelForPhase(phase: string, base: LLMBackbone): LLMBackbone {
 // =============================================================================
 
 export interface OperatorEvents {
-  'status:changed': { oldStatus: OperatorStatus; newStatus: OperatorStatus };
-  'task:started': { task: Task };
-  'task:completed': { task: Task; result: TaskResult };
-  'task:failed': { task: Task; error: string };
-  'task:decomposed': { parent: Task; subtasks: Task[]; reason: string };
-  'agent:thinking': { task: Task; content: string };
-  'agent:tool_call': { task: Task; name: string; args: Record<string, unknown>; source?: 'agent' | 'backend_seeded' };
-  'agent:tool_result': { task: Task; name: string; result: ToolResult; source?: 'agent' | 'backend_seeded' };
-  'finding:discovered': { finding: Finding };
-  'finding:gate-blocked': { finding: Finding; reasons: string[] };
-  'credential:harvested': { credential: Credential };
-  'detection:risk_increased': { newRisk: number };
-  'cooldown:started': { durationMs: number };
-  'cooldown:ended': void;
+  "status:changed": { oldStatus: OperatorStatus; newStatus: OperatorStatus };
+  "task:started": { task: Task };
+  "task:completed": { task: Task; result: TaskResult };
+  "task:failed": { task: Task; error: string };
+  "task:decomposed": { parent: Task; subtasks: Task[]; reason: string };
+  "agent:thinking": { task: Task; content: string };
+  "agent:tool_call": {
+    task: Task;
+    name: string;
+    args: Record<string, unknown>;
+    source?: "agent" | "backend_seeded";
+  };
+  "agent:tool_result": {
+    task: Task;
+    name: string;
+    result: ToolResult;
+    source?: "agent" | "backend_seeded";
+  };
+  "finding:discovered": { finding: Finding };
+  "finding:gate-blocked": { finding: Finding; reasons: string[] };
+  "credential:harvested": { credential: Credential };
+  "detection:risk_increased": { newRisk: number };
+  "cooldown:started": { durationMs: number };
+  "cooldown:ended": void;
 }
 
 export interface CellEvents {
-  'operator:spawned': OperatorAgent;
-  'operator:burned': OperatorAgent;
-  'operator:status_changed': { operator: OperatorAgent; oldStatus: OperatorStatus };
-  'cell:capacity_warning': { current: number; max: number };
+  "operator:spawned": OperatorAgent;
+  "operator:burned": OperatorAgent;
+  "operator:status_changed": {
+    operator: OperatorAgent;
+    oldStatus: OperatorStatus;
+  };
+  "cell:capacity_warning": { current: number; max: number };
 }
 
 // =============================================================================
@@ -101,92 +115,292 @@ export interface ArchetypeProfile {
 
 export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
   recon: {
-    name: 'Reconnaissance Operator',
-    description: 'Specialized in OSINT, network discovery, and asset enumeration',
-    mitreTactics: ['TA0043'],
+    name: "Reconnaissance Operator",
+    description:
+      "Specialized in OSINT, network discovery, and asset enumeration",
+    mitreTactics: ["TA0043"],
     primaryPhases: [KillChainPhase.RECON],
-    defaultTools: ['dns_lookup', 'ip_info', 'username_search', 'telegram_lookup', 'email_format', 'reverse_dns', 'whois_lookup', 'subdomain_enum', 'subdomain_takeover_check', 'nmap_scan', 'port_scan', 'network_trace', 'version_detect', 'robots_txt_fetch', 'cidr_expand', 'technology_detect', 'http_request', 'curl_request', 'header_analysis', 'api_endpoint_discovery', 'subfinder_tool', 'httpx_tool', 'dnsx_tool', 'katana_tool', 'naabu_tool', 'gobuster_tool', 'nmap_tool'],
-    toolCategories: ['recon', 'web'],
-    capabilities: ['osint', 'dns_enum', 'subdomain_discovery', 'port_scanning', 'service_detection'],
-    techniques: ['T1595', 'T1592', 'T1589', 'T1590', 'T1591'],
-    systemPrompt: resolveSystemPrompt('recon'),
+    defaultTools: [
+      "dns_lookup",
+      "ip_info",
+      "username_search",
+      "telegram_lookup",
+      "email_format",
+      "reverse_dns",
+      "whois_lookup",
+      "subdomain_enum",
+      "subdomain_takeover_check",
+      "nmap_scan",
+      "port_scan",
+      "network_trace",
+      "version_detect",
+      "robots_txt_fetch",
+      "cidr_expand",
+      "technology_detect",
+      "http_request",
+      "curl_request",
+      "header_analysis",
+      "api_endpoint_discovery",
+      "subfinder_tool",
+      "httpx_tool",
+      "dnsx_tool",
+      "katana_tool",
+      "naabu_tool",
+      "gobuster_tool",
+      "nmap_tool",
+    ],
+    toolCategories: ["recon", "web"],
+    capabilities: [
+      "osint",
+      "dns_enum",
+      "subdomain_discovery",
+      "port_scanning",
+      "service_detection",
+    ],
+    techniques: ["T1595", "T1592", "T1589", "T1590", "T1591"],
+    systemPrompt: resolveSystemPrompt("recon"),
   },
   scanner: {
-    name: 'Vulnerability Scanner',
-    description: 'Identifies vulnerabilities and security misconfigurations',
-    mitreTactics: ['TA0007'],
+    name: "Vulnerability Scanner",
+    description: "Identifies vulnerabilities and security misconfigurations",
+    mitreTactics: ["TA0007"],
     primaryPhases: [KillChainPhase.WEAPONIZE],
-    defaultTools: ['r2_analyze', 'binary_sink_scan', 'kev_check', 'idor_probe', 'js_analyze', 'nuclei_scan', 'browser_probe', 'ssl_scan', 'cors_check', 'csp_analysis', 'clickjacking_test', 'cookie_analysis', 'http_methods_test', 'open_redirect_test', 'port_scan', 'version_detect', 'technology_detect', 'api_endpoint_discovery', 'header_analysis', 'http_request', 'curl_request', 'nuclei_tool', 'httpx_tool', 'dalfox_tool', 'sqlmap_tool', 'gobuster_tool'],
-    toolCategories: ['vuln', 'web', 'recon'],
-    capabilities: ['vuln_scanning', 'web_scanning', 'service_enum', 'config_audit'],
-    techniques: ['T1046', 'T1082', 'T1083', 'T1087'],
-    systemPrompt: resolveSystemPrompt('scanner'),
+    defaultTools: [
+      "r2_analyze",
+      "binary_sink_scan",
+      "code_audit_scan",
+      "semgrep_tool",
+      "kev_check",
+      "idor_probe",
+      "js_analyze",
+      "nuclei_scan",
+      "browser_probe",
+      "ssl_scan",
+      "cors_check",
+      "csp_analysis",
+      "clickjacking_test",
+      "cookie_analysis",
+      "http_methods_test",
+      "open_redirect_test",
+      "port_scan",
+      "version_detect",
+      "technology_detect",
+      "api_endpoint_discovery",
+      "header_analysis",
+      "http_request",
+      "curl_request",
+      "nuclei_tool",
+      "httpx_tool",
+      "dalfox_tool",
+      "sqlmap_tool",
+      "gobuster_tool",
+    ],
+    toolCategories: ["vuln", "web", "recon"],
+    capabilities: [
+      "vuln_scanning",
+      "web_scanning",
+      "service_enum",
+      "config_audit",
+    ],
+    techniques: ["T1046", "T1082", "T1083", "T1087"],
+    systemPrompt: resolveSystemPrompt("scanner"),
   },
   exploiter: {
-    name: 'Exploitation Specialist',
-    description: 'Executes exploits and achieves initial access',
-    mitreTactics: ['TA0001', 'TA0002'],
+    name: "Exploitation Specialist",
+    description: "Executes exploits and achieves initial access",
+    mitreTactics: ["TA0001", "TA0002"],
     primaryPhases: [KillChainPhase.DELIVER, KillChainPhase.EXPLOIT],
-    defaultTools: ['sqli_scan', 'js_analyze', 'browser_probe', 'xss_scan', 'ssti_test', 'lfi_test', 'open_redirect_test', 'nuclei_scan', 'ffuf_fuzz', 'dir_bruteforce', 'api_endpoint_discovery', 'http_methods_test', 'password_spray', 'hash_crack', 'base64_decode', 'url_encode', 'jwt_decode', 'http_request', 'curl_request', 'technology_detect', 'header_analysis', 'sqlmap_tool', 'dalfox_tool', 'httpx_tool'],
-    toolCategories: ['vuln', 'web', 'auth', 'util'],
-    capabilities: ['exploit_dev', 'payload_delivery', 'initial_access', 'code_execution'],
-    techniques: ['T1190', 'T1133', 'T1078', 'T1059'],
-    systemPrompt: resolveSystemPrompt('exploiter'),
+    defaultTools: [
+      "sqli_scan",
+      "js_analyze",
+      "browser_probe",
+      "xss_scan",
+      "ssti_test",
+      "lfi_test",
+      "open_redirect_test",
+      "nuclei_scan",
+      "ffuf_fuzz",
+      "dir_bruteforce",
+      "api_endpoint_discovery",
+      "http_methods_test",
+      "password_spray",
+      "hash_crack",
+      "base64_decode",
+      "url_encode",
+      "jwt_decode",
+      "http_request",
+      "curl_request",
+      "technology_detect",
+      "header_analysis",
+      "sqlmap_tool",
+      "dalfox_tool",
+      "httpx_tool",
+    ],
+    toolCategories: ["vuln", "web", "auth", "util"],
+    capabilities: [
+      "exploit_dev",
+      "payload_delivery",
+      "initial_access",
+      "code_execution",
+    ],
+    techniques: ["T1190", "T1133", "T1078", "T1059"],
+    systemPrompt: resolveSystemPrompt("exploiter"),
   },
   infiltrator: {
-    name: 'Lateral Movement Specialist',
-    description: 'Moves through networks and escalates privileges',
-    mitreTactics: ['TA0008', 'TA0004'],
+    name: "Lateral Movement Specialist",
+    description: "Moves through networks and escalates privileges",
+    mitreTactics: ["TA0008", "TA0004"],
     primaryPhases: [KillChainPhase.INSTALL],
-    defaultTools: ['hash_crack', 'password_spray', 'jwt_decode', 'cookie_analysis', 'dns_lookup', 'port_scan', 'subdomain_enum', 'network_trace', 'nmap_scan', 'sqli_scan', 'lfi_test', 'cve_lookup', 'base64_decode', 'http_request', 'curl_request', 'technology_detect'],
-    toolCategories: ['recon', 'web', 'auth', 'vuln'],
-    capabilities: ['priv_esc', 'lateral_movement', 'credential_access', 'domain_enum'],
-    techniques: ['T1021', 'T1078', 'T1068', 'T1548'],
-    systemPrompt: resolveSystemPrompt('infiltrator'),
+    defaultTools: [
+      "hash_crack",
+      "password_spray",
+      "jwt_decode",
+      "cookie_analysis",
+      "dns_lookup",
+      "port_scan",
+      "subdomain_enum",
+      "network_trace",
+      "nmap_scan",
+      "sqli_scan",
+      "lfi_test",
+      "cve_lookup",
+      "base64_decode",
+      "http_request",
+      "curl_request",
+      "technology_detect",
+    ],
+    toolCategories: ["recon", "web", "auth", "vuln"],
+    capabilities: [
+      "priv_esc",
+      "lateral_movement",
+      "credential_access",
+      "domain_enum",
+    ],
+    techniques: ["T1021", "T1078", "T1068", "T1548"],
+    systemPrompt: resolveSystemPrompt("infiltrator"),
   },
   exfiltrator: {
-    name: 'Data Exfiltration Specialist',
-    description: 'Collects and extracts sensitive data',
-    mitreTactics: ['TA0009', 'TA0010'],
+    name: "Data Exfiltration Specialist",
+    description: "Collects and extracts sensitive data",
+    mitreTactics: ["TA0009", "TA0010"],
     primaryPhases: [KillChainPhase.ACTIONS],
-    defaultTools: ['http_request', 'curl_request', 'api_endpoint_discovery', 'dir_bruteforce', 'base64_decode', 'url_encode', 'jwt_decode', 'cookie_analysis', 'subdomain_enum', 'robots_txt_fetch', 'technology_detect', 'lfi_test', 'sqli_scan', 'header_analysis', 'cve_lookup'],
-    toolCategories: ['web', 'recon', 'util'],
-    capabilities: ['data_collection', 'exfiltration', 'staging', 'compression'],
-    techniques: ['T1041', 'T1048', 'T1567', 'T1560'],
-    systemPrompt: resolveSystemPrompt('exfiltrator'),
+    defaultTools: [
+      "http_request",
+      "curl_request",
+      "api_endpoint_discovery",
+      "dir_bruteforce",
+      "base64_decode",
+      "url_encode",
+      "jwt_decode",
+      "cookie_analysis",
+      "subdomain_enum",
+      "robots_txt_fetch",
+      "technology_detect",
+      "lfi_test",
+      "sqli_scan",
+      "header_analysis",
+      "cve_lookup",
+    ],
+    toolCategories: ["web", "recon", "util"],
+    capabilities: ["data_collection", "exfiltration", "staging", "compression"],
+    techniques: ["T1041", "T1048", "T1567", "T1560"],
+    systemPrompt: resolveSystemPrompt("exfiltrator"),
   },
   ghost: {
-    name: 'Persistence Specialist',
-    description: 'Establishes persistence and covers tracks',
-    mitreTactics: ['TA0003', 'TA0005'],
+    name: "Persistence Specialist",
+    description: "Establishes persistence and covers tracks",
+    mitreTactics: ["TA0003", "TA0005"],
     primaryPhases: [KillChainPhase.INSTALL, KillChainPhase.C2],
-    defaultTools: ['http_request', 'curl_request', 'cookie_analysis', 'header_analysis', 'csp_analysis', 'clickjacking_test', 'technology_detect', 'http_methods_test', 'jwt_decode', 'base64_decode', 'url_encode', 'robots_txt_fetch', 'subdomain_enum', 'open_redirect_test', 'ssl_scan'],
-    toolCategories: ['web', 'recon', 'vuln'],
-    capabilities: ['persistence', 'evasion', 'cleanup', 'anti_forensics'],
-    techniques: ['T1547', 'T1053', 'T1136', 'T1070'],
-    systemPrompt: resolveSystemPrompt('ghost'),
+    defaultTools: [
+      "http_request",
+      "curl_request",
+      "cookie_analysis",
+      "header_analysis",
+      "csp_analysis",
+      "clickjacking_test",
+      "technology_detect",
+      "http_methods_test",
+      "jwt_decode",
+      "base64_decode",
+      "url_encode",
+      "robots_txt_fetch",
+      "subdomain_enum",
+      "open_redirect_test",
+      "ssl_scan",
+    ],
+    toolCategories: ["web", "recon", "vuln"],
+    capabilities: ["persistence", "evasion", "cleanup", "anti_forensics"],
+    techniques: ["T1547", "T1053", "T1136", "T1070"],
+    systemPrompt: resolveSystemPrompt("ghost"),
   },
   coordinator: {
-    name: 'Mission Coordinator',
-    description: 'Orchestrates operations and manages agents',
-    mitreTactics: ['TA0011'],
+    name: "Mission Coordinator",
+    description: "Orchestrates operations and manages agents",
+    mitreTactics: ["TA0011"],
     primaryPhases: [KillChainPhase.C2],
-    defaultTools: ['cve_lookup', 'technology_detect', 'http_request', 'curl_request', 'header_analysis', 'nmap_scan', 'port_scan', 'dns_lookup', 'subdomain_enum', 'nuclei_scan', 'sqli_scan', 'api_endpoint_discovery', 'version_detect', 'ssl_scan'],
-    toolCategories: ['recon', 'web', 'vuln'],
-    capabilities: ['orchestration', 'task_management', 'communication', 'decision_making'],
-    techniques: ['T1071', 'T1095', 'T1573', 'T1132'],
-    systemPrompt: resolveSystemPrompt('coordinator'),
+    defaultTools: [
+      "code_audit_scan",
+      "binary_sink_scan",
+      "semgrep_tool",
+      "cve_lookup",
+      "technology_detect",
+      "http_request",
+      "curl_request",
+      "header_analysis",
+      "nmap_scan",
+      "port_scan",
+      "dns_lookup",
+      "subdomain_enum",
+      "nuclei_scan",
+      "sqli_scan",
+      "api_endpoint_discovery",
+      "version_detect",
+      "ssl_scan",
+    ],
+    toolCategories: ["recon", "web", "vuln"],
+    capabilities: [
+      "orchestration",
+      "task_management",
+      "communication",
+      "decision_making",
+    ],
+    techniques: ["T1071", "T1095", "T1573", "T1132"],
+    systemPrompt: resolveSystemPrompt("coordinator"),
   },
   analyst: {
-    name: 'Security Analyst',
-    description: 'Analyzes findings and generates reports',
+    name: "Security Analyst",
+    description: "Analyzes findings and generates reports",
     mitreTactics: [],
     primaryPhases: [KillChainPhase.ACTIONS],
-    defaultTools: ['cve_lookup', 'jwt_decode', 'hash_crack', 'base64_decode', 'url_encode', 'technology_detect', 'ssl_scan', 'header_analysis', 'cors_check', 'csp_analysis', 'cookie_analysis', 'whois_lookup', 'dns_lookup', 'http_request', 'curl_request'],
-    toolCategories: ['web', 'vuln', 'recon', 'util'],
-    capabilities: ['analysis', 'reporting', 'recommendations', 'risk_assessment'],
+    defaultTools: [
+      "code_audit_scan",
+      "binary_sink_scan",
+      "semgrep_tool",
+      "cve_lookup",
+      "jwt_decode",
+      "hash_crack",
+      "base64_decode",
+      "url_encode",
+      "technology_detect",
+      "ssl_scan",
+      "header_analysis",
+      "cors_check",
+      "csp_analysis",
+      "cookie_analysis",
+      "whois_lookup",
+      "dns_lookup",
+      "http_request",
+      "curl_request",
+    ],
+    toolCategories: ["web", "vuln", "recon", "util"],
+    capabilities: [
+      "analysis",
+      "reporting",
+      "recommendations",
+      "risk_assessment",
+    ],
     techniques: [],
-    systemPrompt: resolveSystemPrompt('analyst'),
+    systemPrompt: resolveSystemPrompt("analyst"),
   },
 };
 
@@ -194,11 +408,24 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
 // Edit an operator's system prompt + sampling params at RUN TIME without touching the source
 // constants. Applied at operator construction (resolveProfile, below) so every spawned operator
 // picks them up; ARCHETYPE_PROFILES stays immutable as the default to reset back to.
-export interface OperatorParams { temperature: number; maxTokens: number; topP: number; }
-export interface OperatorOverride { systemPrompt?: string; params?: Partial<OperatorParams>; }
-const DEFAULT_OPERATOR_PARAMS: OperatorParams = { temperature: 0.4, maxTokens: 4096, topP: 1.0 };
-const OPERATOR_OVERRIDES: Partial<Record<OperatorArchetype, OperatorOverride>> = {};
-const OPERATOR_PROFILE_REVISIONS: Partial<Record<OperatorArchetype, number>> = {};
+export interface OperatorParams {
+  temperature: number;
+  maxTokens: number;
+  topP: number;
+}
+export interface OperatorOverride {
+  systemPrompt?: string;
+  params?: Partial<OperatorParams>;
+}
+const DEFAULT_OPERATOR_PARAMS: OperatorParams = {
+  temperature: 0.4,
+  maxTokens: 4096,
+  topP: 1.0,
+};
+const OPERATOR_OVERRIDES: Partial<Record<OperatorArchetype, OperatorOverride>> =
+  {};
+const OPERATOR_PROFILE_REVISIONS: Partial<Record<OperatorArchetype, number>> =
+  {};
 
 function advanceOperatorProfileRevision(archetype: OperatorArchetype): number {
   const revision = (OPERATOR_PROFILE_REVISIONS[archetype] || 0) + 1;
@@ -206,14 +433,22 @@ function advanceOperatorProfileRevision(archetype: OperatorArchetype): number {
   return revision;
 }
 
-export function getOperatorProfileRevision(archetype: OperatorArchetype): number {
+export function getOperatorProfileRevision(
+  archetype: OperatorArchetype,
+): number {
   return OPERATOR_PROFILE_REVISIONS[archetype] || 0;
 }
 
-export function setOperatorOverride(archetype: OperatorArchetype, override: OperatorOverride): void {
+export function setOperatorOverride(
+  archetype: OperatorArchetype,
+  override: OperatorOverride,
+): void {
   const cur = OPERATOR_OVERRIDES[archetype] || {};
   OPERATOR_OVERRIDES[archetype] = {
-    systemPrompt: override.systemPrompt !== undefined ? override.systemPrompt : cur.systemPrompt,
+    systemPrompt:
+      override.systemPrompt !== undefined
+        ? override.systemPrompt
+        : cur.systemPrompt,
     params: { ...(cur.params || {}), ...(override.params || {}) },
   };
   advanceOperatorProfileRevision(archetype);
@@ -222,14 +457,21 @@ export function resetOperatorOverride(archetype: OperatorArchetype): void {
   delete OPERATOR_OVERRIDES[archetype];
   advanceOperatorProfileRevision(archetype);
 }
-export function getOperatorParams(archetype: OperatorArchetype): OperatorParams {
-  return { ...DEFAULT_OPERATOR_PARAMS, ...(OPERATOR_OVERRIDES[archetype]?.params || {}) };
+export function getOperatorParams(
+  archetype: OperatorArchetype,
+): OperatorParams {
+  return {
+    ...DEFAULT_OPERATOR_PARAMS,
+    ...(OPERATOR_OVERRIDES[archetype]?.params || {}),
+  };
 }
 /** Resolve an archetype's profile with any runtime systemPrompt override applied. */
 export function resolveProfile(archetype: OperatorArchetype): ArchetypeProfile {
   const base = ARCHETYPE_PROFILES[archetype];
   const ov = OPERATOR_OVERRIDES[archetype];
-  return (ov && ov.systemPrompt) ? { ...base, systemPrompt: ov.systemPrompt } : base;
+  return ov && ov.systemPrompt
+    ? { ...base, systemPrompt: ov.systemPrompt }
+    : base;
 }
 /** Override-aware read view of every archetype, for the Operatives tab. */
 export function listOperatorPrompts() {
@@ -248,29 +490,35 @@ export function listOperatorPrompts() {
       systemPrompt,
       defaultSystemPrompt: base.systemPrompt,
       params: getOperatorParams(a),
-      capabilityDiagnostics: diagnoseOperatorCapabilities(systemPrompt, base.defaultTools),
+      capabilityDiagnostics: diagnoseOperatorCapabilities(
+        systemPrompt,
+        base.defaultTools,
+      ),
       revision: getOperatorProfileRevision(a),
-      overridden: !!(ov && (ov.systemPrompt || (ov.params && Object.keys(ov.params).length))),
+      overridden: !!(
+        ov &&
+        (ov.systemPrompt || (ov.params && Object.keys(ov.params).length))
+      ),
     };
   });
 }
 
 export const ARCHETYPE_CAPABILITIES = Object.fromEntries(
-  Object.entries(ARCHETYPE_PROFILES).map(([k, v]) => [k, v.capabilities])
+  Object.entries(ARCHETYPE_PROFILES).map(([k, v]) => [k, v.capabilities]),
 );
 
 export const ARCHETYPE_TECHNIQUES = Object.fromEntries(
-  Object.entries(ARCHETYPE_PROFILES).map(([k, v]) => [k, v.techniques])
+  Object.entries(ARCHETYPE_PROFILES).map(([k, v]) => [k, v.techniques]),
 );
 
 export const PHASE_ARCHETYPES: Record<KillChainPhase, OperatorArchetype[]> = {
-  [KillChainPhase.RECON]: ['recon'],
-  [KillChainPhase.WEAPONIZE]: ['scanner', 'exploiter'],
-  [KillChainPhase.DELIVER]: ['exploiter'],
-  [KillChainPhase.EXPLOIT]: ['exploiter'],
-  [KillChainPhase.INSTALL]: ['infiltrator', 'ghost'],
-  [KillChainPhase.C2]: ['coordinator', 'ghost'],
-  [KillChainPhase.ACTIONS]: ['exfiltrator', 'analyst'],
+  [KillChainPhase.RECON]: ["recon"],
+  [KillChainPhase.WEAPONIZE]: ["scanner", "exploiter"],
+  [KillChainPhase.DELIVER]: ["exploiter"],
+  [KillChainPhase.EXPLOIT]: ["exploiter"],
+  [KillChainPhase.INSTALL]: ["infiltrator", "ghost"],
+  [KillChainPhase.C2]: ["coordinator", "ghost"],
+  [KillChainPhase.ACTIONS]: ["exfiltrator", "analyst"],
 };
 
 export const KILL_CHAIN_ORDER: KillChainPhase[] = [
@@ -284,13 +532,13 @@ export const KILL_CHAIN_ORDER: KillChainPhase[] = [
 ];
 
 export const PHASE_DESCRIPTIONS: Record<KillChainPhase, string> = {
-  [KillChainPhase.RECON]: 'Gathering intelligence about the target',
-  [KillChainPhase.WEAPONIZE]: 'Preparing exploits and payloads',
-  [KillChainPhase.DELIVER]: 'Delivering exploits to targets',
-  [KillChainPhase.EXPLOIT]: 'Executing exploits to gain access',
-  [KillChainPhase.INSTALL]: 'Establishing persistence and expanding access',
-  [KillChainPhase.C2]: 'Setting up command and control',
-  [KillChainPhase.ACTIONS]: 'Achieving objectives and extracting data',
+  [KillChainPhase.RECON]: "Gathering intelligence about the target",
+  [KillChainPhase.WEAPONIZE]: "Preparing exploits and payloads",
+  [KillChainPhase.DELIVER]: "Delivering exploits to targets",
+  [KillChainPhase.EXPLOIT]: "Executing exploits to gain access",
+  [KillChainPhase.INSTALL]: "Establishing persistence and expanding access",
+  [KillChainPhase.C2]: "Setting up command and control",
+  [KillChainPhase.ACTIONS]: "Achieving objectives and extracting data",
 };
 
 // =============================================================================
@@ -326,7 +574,7 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
   private findings: Finding[] = [];
   private credentials: Credential[] = [];
   /** White-box source excerpt (security-prioritized), set by TempestCommand.setWhiteboxSource */
-  private whiteboxSource: string = '';
+  private whiteboxSource: string = "";
   private profileRevision: number;
   private pendingProfileRevision: number | null = null;
 
@@ -334,7 +582,7 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
     callsign: string,
     archetype: OperatorArchetype,
     config?: Partial<OperatorConfig>,
-    llm?: LLMBackbone
+    llm?: LLMBackbone,
   ) {
     super();
     this.id = randomUUID();
@@ -346,7 +594,7 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
     this.llm = llm;
 
     this._state = {
-      status: 'idle',
+      status: "idle",
       currentTask: null,
       completedTasks: 0,
       failedTasks: 0,
@@ -375,14 +623,14 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
    * Check if the operator is available for tasks
    */
   isAvailable(): boolean {
-    return this._state.status === 'idle';
+    return this._state.status === "idle";
   }
 
   /**
    * Check if the operator is burned (compromised)
    */
   isBurned(): boolean {
-    return this._state.status === 'burned';
+    return this._state.status === "burned";
   }
 
   /**
@@ -391,23 +639,25 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
   async assignTask(task: Task, target?: Target): Promise<TaskResult> {
     this.applyPendingProfileRefresh();
     if (!this.isAvailable()) {
-      throw new Error(`Operator ${this.callsign} is not available (status: ${this._state.status})`);
+      throw new Error(
+        `Operator ${this.callsign} is not available (status: ${this._state.status})`,
+      );
     }
 
-    this.setStatus('tasked');
+    this.setStatus("tasked");
     this._state.currentTask = task.id;
     this._state.lastActivityTime = Date.now();
 
-    this.emit('task:started', { task });
+    this.emit("task:started", { task });
 
     try {
-      this.setStatus('executing');
+      this.setStatus("executing");
       const result = await this.executeTask(task, target);
 
       this._state.completedTasks++;
       this._state.currentTask = null;
 
-      this.emit('task:completed', { task, result });
+      this.emit("task:completed", { task, result });
 
       // Apply cooldown after task
       await this.applyCooldown();
@@ -417,7 +667,8 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
       this._state.failedTasks++;
       this._state.currentTask = null;
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
       // Decompose fallback: if we have an LLM and retries left, break the
       // failed task into smaller subtasks instead of giving up.
@@ -425,8 +676,12 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
       if (this.llm && attempt < this.config.maxRetries) {
         const subtasks = await this.decomposeTask(task, errorMessage);
         if (subtasks.length > 0) {
-          this.emit('task:decomposed', { parent: task, subtasks, reason: errorMessage });
-          this.setStatus('idle');
+          this.emit("task:decomposed", {
+            parent: task,
+            subtasks,
+            reason: errorMessage,
+          });
+          this.setStatus("idle");
 
           const subResults: TaskResult[] = [];
           for (const sub of subtasks) {
@@ -435,18 +690,20 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
             subResults.push(r);
           }
 
-          const anySuccess = subResults.some(r => r.success);
+          const anySuccess = subResults.some((r) => r.success);
           return {
             success: anySuccess,
-            output: subResults.map(r => r.output || r.error || '').join('\n---\n'),
-            findings: subResults.flatMap(r => r.findings || []),
+            output: subResults
+              .map((r) => r.output || r.error || "")
+              .join("\n---\n"),
+            findings: subResults.flatMap((r) => r.findings || []),
           };
         }
       }
 
-      this.emit('task:failed', { task, error: errorMessage });
+      this.emit("task:failed", { task, error: errorMessage });
       this.increaseDetectionRisk(0.1);
-      this.setStatus('idle');
+      this.setStatus("idle");
 
       return {
         success: false,
@@ -460,20 +717,21 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
    * Idle operators update immediately; all other live states defer until the
    * next transition back to idle.
    */
-  requestProfileRefresh(): 'applied' | 'deferred' {
+  requestProfileRefresh(): "applied" | "deferred" {
     const latestRevision = getOperatorProfileRevision(this.archetype);
-    if (this._state.status === 'idle') {
+    if (this._state.status === "idle") {
       this.profile = resolveProfile(this.archetype);
       this.profileRevision = latestRevision;
       this.pendingProfileRevision = null;
-      return 'applied';
+      return "applied";
     }
     this.pendingProfileRevision = latestRevision;
-    return 'deferred';
+    return "deferred";
   }
 
   private applyPendingProfileRefresh(): void {
-    if (this.pendingProfileRevision === null || this._state.status !== 'idle') return;
+    if (this.pendingProfileRevision === null || this._state.status !== "idle")
+      return;
     this.profile = resolveProfile(this.archetype);
     this.profileRevision = getOperatorProfileRevision(this.archetype);
     this.pendingProfileRevision = null;
@@ -510,27 +768,43 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
     // real source alongside the task; empty string keeps black-box behavior.
     if (this.agentLoop && this.llm) {
       const onThinking = ({ content }: { content: string }): void => {
-        this.emit('agent:thinking', { task, content });
+        this.emit("agent:thinking", { task, content });
       };
-      const onToolCall = ({ name, args, source }: { name: string; args: Record<string, unknown>; source?: 'agent' | 'backend_seeded' }): void => {
-        this.emit('agent:tool_call', { task, name, args, source });
+      const onToolCall = ({
+        name,
+        args,
+        source,
+      }: {
+        name: string;
+        args: Record<string, unknown>;
+        source?: "agent" | "backend_seeded";
+      }): void => {
+        this.emit("agent:tool_call", { task, name, args, source });
       };
-      const onToolResult = ({ name, result, source }: { name: string; result: ToolResult; source?: 'agent' | 'backend_seeded' }): void => {
-        this.emit('agent:tool_result', { task, name, result, source });
+      const onToolResult = ({
+        name,
+        result,
+        source,
+      }: {
+        name: string;
+        result: ToolResult;
+        source?: "agent" | "backend_seeded";
+      }): void => {
+        this.emit("agent:tool_result", { task, name, result, source });
       };
       const canForwardAgentEvents =
-        typeof this.agentLoop.on === 'function' &&
-        typeof this.agentLoop.off === 'function';
+        typeof this.agentLoop.on === "function" &&
+        typeof this.agentLoop.off === "function";
       if (canForwardAgentEvents) {
-        this.agentLoop.on('agent:thinking', onThinking);
-        this.agentLoop.on('agent:tool_call', onToolCall);
-        this.agentLoop.on('agent:tool_result', onToolResult);
+        this.agentLoop.on("agent:thinking", onThinking);
+        this.agentLoop.on("agent:tool_call", onToolCall);
+        this.agentLoop.on("agent:tool_result", onToolResult);
       }
 
       let result;
       // [Phase-2] Register as live on the board and pull the shared situation report so this
       // operator sees teammates' verified leads/claims — it builds on them instead of running blind.
-      this.board?.heartbeat(this.id, 'hunting', task.name);
+      this.board?.heartbeat(this.id, "hunting", task.name);
       const sharedContext = this.board?.situationReport(this.id);
       // ── Phase-based model routing (opt-in) ──────────────────────────────
       // Missions burn most LLM calls in recon/scanner phases and fewest in
@@ -545,13 +819,19 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
           routedLLM = routed;
           this.agentLoop.setLLM(routed);
         }
-        result = await this.agentLoop.run(task, this.profile.systemPrompt, target, this.whiteboxSource, sharedContext);
+        result = await this.agentLoop.run(
+          task,
+          this.profile.systemPrompt,
+          target,
+          this.whiteboxSource,
+          sharedContext,
+        );
       } finally {
         if (routedLLM && this.agentLoop) this.agentLoop.setLLM(this.llm);
         if (canForwardAgentEvents) {
-          this.agentLoop.off('agent:thinking', onThinking);
-          this.agentLoop.off('agent:tool_call', onToolCall);
-          this.agentLoop.off('agent:tool_result', onToolResult);
+          this.agentLoop.off("agent:thinking", onThinking);
+          this.agentLoop.off("agent:tool_call", onToolCall);
+          this.agentLoop.off("agent:tool_result", onToolResult);
         }
       }
 
@@ -561,25 +841,27 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
       // recordFinding's gate then refuses to mark it verified. The old code laundered the
       // model's prose summary as `type:'output'` for EVERY finding, which passed the gate.
       for (const finding of result.findings) {
-        const toolBacked = finding.provenance === 'tool';
+        const toolBacked = finding.provenance === "tool";
         this.recordFinding({
           id: `finding-${randomUUID()}`,
           title: finding.title,
           description: finding.details,
           severity: finding.severity,
-          targetId: target?.id || 'unknown',
+          targetId: target?.id || "unknown",
           operatorId: this.id,
           phase: task.phase as KillChainPhase,
           cvss: finding.cvss,
           cve: finding.cve,
           cwe: finding.cwe,
           evidence: toolBacked
-            ? [{
-                type: 'output',
-                content: finding.toolOutput || finding.details || '',
-                timestamp: Date.now(),
-                metadata: { tool: finding.toolName },
-              }]
+            ? [
+                {
+                  type: "output",
+                  content: finding.toolOutput || finding.details || "",
+                  timestamp: Date.now(),
+                  metadata: { tool: finding.toolName },
+                },
+              ]
             : [],
           remediation: finding.remediation,
           discoveredAt: Date.now(),
@@ -592,7 +874,7 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
         error: result.finalSummaryError
           ? `${result.summary} Final summary failed: ${result.finalSummaryError}`
           : undefined,
-        findings: result.findings.map(f => f.title),
+        findings: result.findings.map((f) => f.title),
         nextTasks: undefined,
       };
     }
@@ -601,20 +883,26 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
     if (this.llm) {
       const prompt = this.buildTaskPrompt(task);
       const _p = getOperatorParams(this.archetype);
-      const response = await this.llm.prompt(prompt, this.profile.systemPrompt, { temperature: _p.temperature, maxTokens: _p.maxTokens });
+      const response = await this.llm.prompt(
+        prompt,
+        this.profile.systemPrompt,
+        { temperature: _p.temperature, maxTokens: _p.maxTokens },
+      );
       return this.parseTaskResponse(response, task);
     }
 
     // No LLM available
     return {
       success: false,
-      error: `No LLM backbone configured. Operator "${this.callsign}" requires an LLM to execute task "${task.name}". ` +
-             `Configure an LLM provider (OpenRouter, OpenAI, Anthropic) to enable intelligent task execution.`,
-      output: `Task "${task.name}" cannot be executed without LLM backbone.\n` +
-              `Operator: ${this.callsign} (${this.archetype})\n` +
-              `Phase: ${task.phase}\n` +
-              `Required capabilities: ${this.profile.capabilities.join(', ')}\n\n` +
-              `To execute this task, configure an LLM provider in your T3MP3ST configuration.`,
+      error:
+        `No LLM backbone configured. Operator "${this.callsign}" requires an LLM to execute task "${task.name}". ` +
+        `Configure an LLM provider (OpenRouter, OpenAI, Anthropic) to enable intelligent task execution.`,
+      output:
+        `Task "${task.name}" cannot be executed without LLM backbone.\n` +
+        `Operator: ${this.callsign} (${this.archetype})\n` +
+        `Phase: ${task.phase}\n` +
+        `Required capabilities: ${this.profile.capabilities.join(", ")}\n\n` +
+        `To execute this task, configure an LLM provider in your T3MP3ST configuration.`,
     };
   }
 
@@ -623,7 +911,10 @@ export class OperatorAgent extends EventEmitter<OperatorEvents> {
    * The operator asks its LLM to break the problem down — this is an
    * internal recovery strategy, never surfaced as a user-facing mode.
    */
-  private async decomposeTask(task: Task, failureReason: string): Promise<Task[]> {
+  private async decomposeTask(
+    task: Task,
+    failureReason: string,
+  ): Promise<Task[]> {
     if (!this.llm) return [];
     try {
       const prompt = `A task just FAILED. Your job is to decompose it into 2-4 smaller, independent subtasks that are each more likely to succeed.
@@ -637,11 +928,18 @@ FAILED TASK:
 Respond with ONLY a JSON array of subtask objects, each with "name" and "description" fields. Keep subtasks concrete and scoped — each should be completable on its own. Example:
 [{"name":"enumerate endpoints","description":"Map all HTTP endpoints on the target before attempting exploitation"},{"name":"check auth bypass","description":"Test for authentication bypass on the discovered endpoints"}]`;
 
-      const response = await this.llm.prompt(prompt, this.profile.systemPrompt, { maxTokens: 1024, temperature: 0.3 });
+      const response = await this.llm.prompt(
+        prompt,
+        this.profile.systemPrompt,
+        { maxTokens: 1024, temperature: 0.3 },
+      );
       const match = response.match(/\[[\s\S]*\]/);
       if (!match) return [];
-      const parsed: Array<{ name: string; description: string }> = JSON.parse(match[0]);
-      if (!Array.isArray(parsed) || parsed.length < 2 || parsed.length > 4) return [];
+      const parsed: Array<{ name: string; description: string }> = JSON.parse(
+        match[0],
+      );
+      if (!Array.isArray(parsed) || parsed.length < 2 || parsed.length > 4)
+        return [];
 
       return parsed.map((sub, i) => ({
         id: `${task.id}-decomp-${i}`,
@@ -650,7 +948,7 @@ Respond with ONLY a JSON array of subtask objects, each with "name" and "descrip
         description: sub.description,
         phase: task.phase,
         operatorType: task.operatorType,
-        status: 'pending' as const,
+        status: "pending" as const,
         priority: task.priority,
         dependencies: [],
         createdAt: Date.now(),
@@ -701,15 +999,18 @@ Respond in a structured format.`;
    */
   private extractNextTasks(response: string): string[] | undefined {
     const nextSteps: string[] = [];
-    const lines = response.split('\n');
+    const lines = response.split("\n");
 
     let inNextSteps = false;
     for (const line of lines) {
-      if (line.toLowerCase().includes('next step') || line.toLowerCase().includes('recommend')) {
+      if (
+        line.toLowerCase().includes("next step") ||
+        line.toLowerCase().includes("recommend")
+      ) {
         inNextSteps = true;
         continue;
       }
-      if (inNextSteps && line.trim().startsWith('-')) {
+      if (inNextSteps && line.trim().startsWith("-")) {
         nextSteps.push(line.trim().substring(1).trim());
       }
     }
@@ -727,7 +1028,12 @@ Respond in a structured format.`;
     // gate's reasons attached. This enforces the invariant the project sells, at the point
     // of creation, so a model can no longer assert a "critical" into the record for free.
     const gate = gateLiveFinding(finding);
-    finding.verifyGate = { passed: gate.passed, provenance: gate.provenance, reasons: gate.reasons, checkedAt: gate.checkedAt };
+    finding.verifyGate = {
+      passed: gate.passed,
+      provenance: gate.provenance,
+      reasons: gate.reasons,
+      checkedAt: gate.checkedAt,
+    };
     if (gate.passed) {
       finding.verifiedAt = finding.verifiedAt ?? Date.now();
     } else {
@@ -736,17 +1042,21 @@ Respond in a structured format.`;
       // in the report. The original model assertion is preserved in assertedSeverity;
       // the reported severity is capped: no provenance → low, context-only → medium,
       // tool-backed → unchanged (verified).
-      const cap: Record<string, Severity> = { none: 'low', context: 'medium' };
+      const cap: Record<string, Severity> = { none: "low", context: "medium" };
       const capped = cap[gate.provenance];
-      if (capped && SEVERITY_SCORES[finding.severity] > SEVERITY_SCORES[capped]) {
+      if (
+        capped &&
+        SEVERITY_SCORES[finding.severity] > SEVERITY_SCORES[capped]
+      ) {
         finding.assertedSeverity = finding.severity;
         finding.severity = capped;
       }
     }
     this.findings.push(finding);
     this._state.findingsCount++;
-    this.emit('finding:discovered', { finding });
-    if (!gate.passed) this.emit('finding:gate-blocked', { finding, reasons: gate.reasons });
+    this.emit("finding:discovered", { finding });
+    if (!gate.passed)
+      this.emit("finding:gate-blocked", { finding, reasons: gate.reasons });
   }
 
   /**
@@ -755,7 +1065,7 @@ Respond in a structured format.`;
   recordCredential(credential: Credential): void {
     this.credentials.push(credential);
     this._state.credentialsCount++;
-    this.emit('credential:harvested', { credential });
+    this.emit("credential:harvested", { credential });
   }
 
   /**
@@ -776,13 +1086,13 @@ Respond in a structured format.`;
    * Apply cooldown after task
    */
   private async applyCooldown(): Promise<void> {
-    this.setStatus('cooldown');
-    this.emit('cooldown:started', { durationMs: this.config.cooldownMs });
+    this.setStatus("cooldown");
+    this.emit("cooldown:started", { durationMs: this.config.cooldownMs });
 
-    await new Promise<void>(resolve => {
+    await new Promise<void>((resolve) => {
       this.cooldownTimer = setTimeout(() => {
-        this.setStatus('idle');
-        this.emit('cooldown:ended');
+        this.setStatus("idle");
+        this.emit("cooldown:ended");
         resolve();
       }, this.config.cooldownMs);
     });
@@ -794,7 +1104,7 @@ Respond in a structured format.`;
   increaseDetectionRisk(amount: number): void {
     const newRisk = Math.min(1, this._state.detectionRisk + amount);
     this._state.detectionRisk = newRisk;
-    this.emit('detection:risk_increased', { newRisk });
+    this.emit("detection:risk_increased", { newRisk });
 
     // Check if operator should be burned
     if (newRisk >= this.config.maxDetectionRisk) {
@@ -810,7 +1120,7 @@ Respond in a structured format.`;
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
     }
-    this.setStatus('burned');
+    this.setStatus("burned");
   }
 
   /**
@@ -821,7 +1131,7 @@ Respond in a structured format.`;
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
     }
-    this.setStatus('exfiltrated');
+    this.setStatus("exfiltrated");
   }
 
   /**
@@ -844,7 +1154,11 @@ Respond in a structured format.`;
    */
   abortActiveTask(reason: string): void {
     // Nothing to abort if the operator isn't holding a task.
-    if (this._state.status === 'idle' || this._state.status === 'burned' || this._state.status === 'exfiltrated') {
+    if (
+      this._state.status === "idle" ||
+      this._state.status === "burned" ||
+      this._state.status === "exfiltrated"
+    ) {
       return;
     }
     if (this.cooldownTimer) {
@@ -854,11 +1168,11 @@ Respond in a structured format.`;
     this._state.failedTasks++;
     this._state.currentTask = null;
     this._state.lastActivityTime = Date.now();
-    this.emit('task:failed', {
-      task: { id: 'unknown', name: reason } as unknown as Task,
+    this.emit("task:failed", {
+      task: { id: "unknown", name: reason } as unknown as Task,
       error: `aborted: ${reason}`,
     });
-    this.setStatus('idle');
+    this.setStatus("idle");
   }
 
   /**
@@ -867,8 +1181,8 @@ Respond in a structured format.`;
   private setStatus(newStatus: OperatorStatus): void {
     const oldStatus = this._state.status;
     this._state.status = newStatus;
-    if (newStatus === 'idle') this.applyPendingProfileRefresh();
-    this.emit('status:changed', { oldStatus, newStatus });
+    if (newStatus === "idle") this.applyPendingProfileRefresh();
+    this.emit("status:changed", { oldStatus, newStatus });
   }
 
   /**
@@ -951,10 +1265,10 @@ export class OperatorCell extends EventEmitter<CellEvents> {
     callsign: string,
     archetype: OperatorArchetype,
     config?: Partial<OperatorConfig>,
-    llm?: LLMBackbone
+    llm?: LLMBackbone,
   ): OperatorAgent {
     if (this.operators.size >= this.maxOperators) {
-      this.emit('cell:capacity_warning', {
+      this.emit("cell:capacity_warning", {
         current: this.operators.size,
         max: this.maxOperators,
       });
@@ -968,19 +1282,24 @@ export class OperatorCell extends EventEmitter<CellEvents> {
       }
     }
 
-    const operator = new OperatorAgent(callsign, archetype, config, llm ?? this.llm);
+    const operator = new OperatorAgent(
+      callsign,
+      archetype,
+      config,
+      llm ?? this.llm,
+    );
 
     // Forward operator events
-    operator.on('status:changed', ({ oldStatus }) => {
-      this.emit('operator:status_changed', { operator, oldStatus });
+    operator.on("status:changed", ({ oldStatus }) => {
+      this.emit("operator:status_changed", { operator, oldStatus });
 
-      if (operator.status === 'burned') {
-        this.emit('operator:burned', operator);
+      if (operator.status === "burned") {
+        this.emit("operator:burned", operator);
       }
     });
 
     this.operators.set(operator.id, operator);
-    this.emit('operator:spawned', operator);
+    this.emit("operator:spawned", operator);
 
     return operator;
   }
@@ -1015,25 +1334,29 @@ export class OperatorCell extends EventEmitter<CellEvents> {
    * Get available operators
    */
   getAvailableOperators(): OperatorAgent[] {
-    return this.getAllOperators().filter(op => op.isAvailable());
+    return this.getAllOperators().filter((op) => op.isAvailable());
   }
 
   /**
    * Get a single available operator matching an archetype (for task dispatch)
    */
-  getAvailableOperator(archetype: OperatorArchetype): OperatorAgent | undefined {
-    return this.getAllOperators().find(op => op.archetype === archetype && op.isAvailable());
+  getAvailableOperator(
+    archetype: OperatorArchetype,
+  ): OperatorAgent | undefined {
+    return this.getAllOperators().find(
+      (op) => op.archetype === archetype && op.isAvailable(),
+    );
   }
 
   /**
    * Get operators by archetype
    */
   getOperatorsByArchetype(archetype: OperatorArchetype): OperatorAgent[] {
-    return this.getAllOperators().filter(op => op.archetype === archetype);
+    return this.getAllOperators().filter((op) => op.archetype === archetype);
   }
 
   refreshOperatorProfiles(archetype: OperatorArchetype): {
-    policy: 'idle-now-active-next-task';
+    policy: "idle-now-active-next-task";
     revision: number;
     appliedOperatorIds: string[];
     deferredOperatorIds: string[];
@@ -1043,10 +1366,12 @@ export class OperatorCell extends EventEmitter<CellEvents> {
     const deferredOperatorIds: string[] = [];
     for (const operator of this.getOperatorsByArchetype(archetype)) {
       const result = operator.requestProfileRefresh();
-      (result === 'applied' ? appliedOperatorIds : deferredOperatorIds).push(operator.id);
+      (result === "applied" ? appliedOperatorIds : deferredOperatorIds).push(
+        operator.id,
+      );
     }
     return {
-      policy: 'idle-now-active-next-task',
+      policy: "idle-now-active-next-task",
       revision: getOperatorProfileRevision(archetype),
       appliedOperatorIds,
       deferredOperatorIds,
@@ -1059,7 +1384,9 @@ export class OperatorCell extends EventEmitter<CellEvents> {
    */
   getOperatorsForPhase(phase: KillChainPhase): OperatorAgent[] {
     const archetypes = PHASE_ARCHETYPES[phase];
-    return this.getAllOperators().filter(op => archetypes.includes(op.archetype));
+    return this.getAllOperators().filter((op) =>
+      archetypes.includes(op.archetype),
+    );
   }
 
   /**
@@ -1104,7 +1431,9 @@ export class OperatorCell extends EventEmitter<CellEvents> {
     const operators = this.getAllOperators();
 
     const byArchetype: Partial<Record<OperatorArchetype, number>> = {};
-    for (const archetype of Object.keys(ARCHETYPE_PROFILES) as OperatorArchetype[]) {
+    for (const archetype of Object.keys(
+      ARCHETYPE_PROFILES,
+    ) as OperatorArchetype[]) {
       byArchetype[archetype] = 0;
     }
 
@@ -1117,17 +1446,17 @@ export class OperatorCell extends EventEmitter<CellEvents> {
       byArchetype[op.archetype] = (byArchetype[op.archetype] || 0) + 1;
 
       switch (op.status) {
-        case 'idle':
+        case "idle":
           available++;
           break;
-        case 'tasked':
-        case 'executing':
+        case "tasked":
+        case "executing":
           busy++;
           break;
-        case 'cooldown':
+        case "cooldown":
           cooldown++;
           break;
-        case 'burned':
+        case "burned":
           burned++;
           break;
       }
@@ -1174,7 +1503,7 @@ export function createOperator(
   callsign: string,
   archetype: OperatorArchetype,
   config?: Partial<OperatorConfig>,
-  llm?: LLMBackbone
+  llm?: LLMBackbone,
 ): OperatorAgent {
   return new OperatorAgent(callsign, archetype, config, llm);
 }
@@ -1182,14 +1511,14 @@ export function createOperator(
 export function createBalancedTeam(llm?: LLMBackbone): OperatorCell {
   const cell = new OperatorCell(10, llm);
 
-  cell.spawnOperator('Ghost-1', 'recon');
-  cell.spawnOperator('Wraith-1', 'scanner');
-  cell.spawnOperator('Phantom-1', 'exploiter');
-  cell.spawnOperator('Shadow-1', 'infiltrator');
-  cell.spawnOperator('Specter-1', 'exfiltrator');
-  cell.spawnOperator('Shade-1', 'ghost');
-  cell.spawnOperator('Oracle-1', 'coordinator');
-  cell.spawnOperator('Sage-1', 'analyst');
+  cell.spawnOperator("Ghost-1", "recon");
+  cell.spawnOperator("Wraith-1", "scanner");
+  cell.spawnOperator("Phantom-1", "exploiter");
+  cell.spawnOperator("Shadow-1", "infiltrator");
+  cell.spawnOperator("Specter-1", "exfiltrator");
+  cell.spawnOperator("Shade-1", "ghost");
+  cell.spawnOperator("Oracle-1", "coordinator");
+  cell.spawnOperator("Sage-1", "analyst");
 
   return cell;
 }
@@ -1202,9 +1531,9 @@ export function createStealthTeam(llm?: LLMBackbone): OperatorCell {
     maxRetries: 2,
   };
 
-  cell.spawnOperator('Whisper-1', 'recon', stealthConfig);
-  cell.spawnOperator('Silence-1', 'scanner', stealthConfig);
-  cell.spawnOperator('Void-1', 'ghost', stealthConfig);
+  cell.spawnOperator("Whisper-1", "recon", stealthConfig);
+  cell.spawnOperator("Silence-1", "scanner", stealthConfig);
+  cell.spawnOperator("Void-1", "ghost", stealthConfig);
 
   return cell;
 }
@@ -1217,10 +1546,10 @@ export function createBreachTeam(llm?: LLMBackbone): OperatorCell {
     maxRetries: 5,
   };
 
-  cell.spawnOperator('Hammer-1', 'exploiter', aggressiveConfig);
-  cell.spawnOperator('Hammer-2', 'exploiter', aggressiveConfig);
-  cell.spawnOperator('Drill-1', 'infiltrator', aggressiveConfig);
-  cell.spawnOperator('Grab-1', 'exfiltrator', aggressiveConfig);
+  cell.spawnOperator("Hammer-1", "exploiter", aggressiveConfig);
+  cell.spawnOperator("Hammer-2", "exploiter", aggressiveConfig);
+  cell.spawnOperator("Drill-1", "infiltrator", aggressiveConfig);
+  cell.spawnOperator("Grab-1", "exfiltrator", aggressiveConfig);
 
   return cell;
 }
