@@ -16,22 +16,33 @@
  * - The General plans the entire campaign and commands the operators
  */
 
-import { EventEmitter } from 'eventemitter3';
-import { randomUUID } from 'crypto';
-import type { LLMBackbone } from '../llm/index.js';
-import type { TempestCommand } from '../index.js';
+import { EventEmitter } from "eventemitter3";
+import { randomUUID } from "crypto";
+import type { LLMBackbone } from "../llm/index.js";
+import type { TempestCommand } from "../index.js";
 import type {
   OperatorArchetype,
   OpsecLevel,
   Finding,
   Severity,
-} from '../types/index.js';
+} from "../types/index.js";
+import { RESOURCE_PACKS, type MissionFamily } from "../resources/index.js";
+import { adaptersForFamily } from "../arsenal/catalog.js";
 import {
-  RESOURCE_PACKS,
-  type MissionFamily,
-} from '../resources/index.js';
-import { adaptersForFamily } from '../arsenal/catalog.js';
-import { GENERAL_SYSTEM_PROMPT, GENERAL_REPLAN_PROMPT } from '../prompts/index.js';
+  GENERAL_SYSTEM_PROMPT,
+  GENERAL_REPLAN_PROMPT,
+} from "../prompts/index.js";
+import {
+  createLiveTypeSafeJudgmentProvider,
+  evaluateMissionRouteOffline,
+  evaluateMissionRouteAsync,
+  TypeSafeRouterError,
+  type MissionJudgmentProvider,
+  type MissionRouteDecision,
+  type TypeSafeHttpTransport,
+} from "./typesafe-router.js";
+
+export * from "./typesafe-router.js";
 
 // =============================================================================
 // TYPES
@@ -46,7 +57,7 @@ export interface Directive {
   /** Optional scope hints (e.g. "only web apps", "internal network") */
   scopeHints?: string;
   /** Optional urgency level */
-  urgency?: 'low' | 'normal' | 'high' | 'critical';
+  urgency?: "low" | "normal" | "high" | "critical";
   /** Optional OPSEC preference */
   opsecPreference?: OpsecLevel;
 }
@@ -73,7 +84,7 @@ export interface OpPlan {
   /** Contingency plans */
   contingencies: OpPlanContingency[];
   /** Estimated complexity */
-  complexity: 'trivial' | 'low' | 'moderate' | 'high' | 'extreme';
+  complexity: "trivial" | "low" | "moderate" | "high" | "extreme";
   /** General's strategic rationale */
   rationale: string;
   /** Primary mission family for routing and UI grouping */
@@ -110,7 +121,14 @@ export interface OpPlanHuntLane {
 }
 
 export interface OpPlanAuthorityReceipt {
-  action: 'route_preview' | 'mission_execution' | 'network_request' | 'command_execution' | 'model_call' | 'autonomous_execution' | 'human_review';
+  action:
+    | "route_preview"
+    | "mission_execution"
+    | "network_request"
+    | "command_execution"
+    | "model_call"
+    | "autonomous_execution"
+    | "human_review";
   target: string;
   reason: string;
   requiredBefore: string;
@@ -119,7 +137,7 @@ export interface OpPlanAuthorityReceipt {
 export interface OpPlanEvidenceContract {
   requiredArtifacts: string[];
   minimumConfidence: number;
-  provenanceFloor: 'weak' | 'context' | 'tool' | 'replayable';
+  provenanceFloor: "weak" | "context" | "tool" | "replayable";
   claimRules: string[];
   retestRequired: boolean;
 }
@@ -132,7 +150,13 @@ export interface OpPlanWorkOrder {
   suspectedBoundary: string;
   target: string;
   assignedArchetype: OperatorArchetype;
-  kind: 'prove' | 'disprove' | 'map_impact' | 'owner_control' | 'retest_design' | 'tool_probe';
+  kind:
+    | "prove"
+    | "disprove"
+    | "map_impact"
+    | "owner_control"
+    | "retest_design"
+    | "tool_probe";
   safeProbe: string;
   expectedSignal: string;
   evidenceArtifact: string;
@@ -141,7 +165,8 @@ export interface OpPlanWorkOrder {
   requiresReceipt: boolean;
   toolHints: string[];
   priority: number;
-  status: 'queued' | 'ready' | 'needs_receipt' | 'running' | 'completed' | 'blocked';
+  status:
+    "queued" | "ready" | "needs_receipt" | "running" | "completed" | "blocked";
 }
 
 export interface OpPlanToolPlan {
@@ -160,7 +185,7 @@ export interface OpPlanCritique {
 }
 
 export interface OpPlanMissionGate {
-  status: 'ready' | 'degraded' | 'hold';
+  status: "ready" | "degraded" | "hold";
   score: number;
   blockers: string[];
   warnings: string[];
@@ -175,7 +200,7 @@ export interface OpPlanLearningDirective {
 }
 
 export interface GeneralPlanReview {
-  status: 'ready' | 'degraded' | 'hold';
+  status: "ready" | "degraded" | "hold";
   score: number;
   blockers: string[];
   warnings: string[];
@@ -250,7 +275,7 @@ export interface OpPlanContingency {
   /** Response action */
   action: string;
   /** Priority of this contingency */
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  priority: "low" | "medium" | "high" | "critical";
 }
 
 /** Status update from the General during operation */
@@ -296,16 +321,42 @@ export interface StrategicAssessment {
 // =============================================================================
 
 export interface GeneralEvents {
-  'general:planning': { directive: Directive };
-  'general:plan_ready': { plan: OpPlan };
-  'general:review': { planId: string; review: GeneralPlanReview };
-  'general:plan_failed': { error: string };
-  'general:executing': { plan: OpPlan };
-  'general:sitrep': GeneralSitrep;
-  'general:adapting': { reason: string; adaptation: string };
-  'general:assessment': StrategicAssessment;
-  'general:complete': { plan: OpPlan; assessment: StrategicAssessment };
-  'general:error': { error: string };
+  "general:planning": { directive: Directive };
+  "general:route_decision": { decision: MissionRouteDecision };
+  "general:plan_ready": { plan: OpPlan };
+  "general:review": { planId: string; review: GeneralPlanReview };
+  "general:plan_failed": { error: string };
+  "general:executing": { plan: OpPlan };
+  "general:sitrep": GeneralSitrep;
+  "general:adapting": { reason: string; adaptation: string };
+  "general:assessment": StrategicAssessment;
+  "general:complete": { plan: OpPlan; assessment: StrategicAssessment };
+  "general:error": { error: string };
+}
+
+export type OpGeneralRoutingMode = "auto" | "live" | "offline";
+
+export interface OpGeneralOptions {
+  /** Optional System One / Jev calibrated judgment provider for async routing. */
+  judgmentProvider?: MissionJudgmentProvider;
+  /** Optional explicit local source root hint for white-box code_audit routing. */
+  sourceRoot?: string;
+  /**
+   * Routing mode when no explicit `judgmentProvider` is supplied:
+   * - `"auto"` (default): automatically uses live TypeSafe Jev HTTP routing when
+   *   `TYPESAFE_API_KEY` / `JEV_TYPESAFE_API_KEY` / `JEV_HOTEP_API_KEY` is present
+   *   (outside implicit Vitest runs, or whenever `routingMode: "auto"` / `typesafeEnv`
+   *   is explicitly supplied), falling back to the deterministic offline estimator.
+   * - `"live"`: requires a live TypeSafe Jev API key and surfaces config errors.
+   * - `"offline"`: forces deterministic offline routing even when env keys are set.
+   */
+  routingMode?: OpGeneralRoutingMode;
+  /** Convenience flag equivalent to `routingMode: "offline"` for deterministic tests. */
+  forceOfflineRouting?: boolean;
+  /** Optional environment override for TypeSafe key/URL lookup. */
+  typesafeEnv?: NodeJS.ProcessEnv;
+  /** Optional HTTP transport override for live TypeSafe requests (e.g. test mocks). */
+  typesafeTransport?: TypeSafeHttpTransport;
 }
 
 // =============================================================================
@@ -314,6 +365,13 @@ export interface GeneralEvents {
 
 export class OpGeneral extends EventEmitter<GeneralEvents> {
   private llm: LLMBackbone;
+  private judgmentProvider?: MissionJudgmentProvider;
+  private configuredSourceRoot?: string;
+  private routingMode?: OpGeneralRoutingMode;
+  private forceOfflineRouting: boolean;
+  private typesafeEnv?: NodeJS.ProcessEnv;
+  private typesafeTransport?: TypeSafeHttpTransport;
+  private lastRoutingDecision: MissionRouteDecision | null = null;
   private currentPlan: OpPlan | null = null;
   private sitreps: GeneralSitrep[] = [];
   private findingsBuffer: Finding[] = [];
@@ -325,9 +383,49 @@ export class OpGeneral extends EventEmitter<GeneralEvents> {
   /** Findings threshold to trigger early re-evaluation */
   private findings_trigger: number = 3;
 
-  constructor(llm: LLMBackbone) {
+  constructor(llm: LLMBackbone, options?: OpGeneralOptions) {
     super();
     this.llm = llm;
+    this.judgmentProvider = options?.judgmentProvider;
+    this.configuredSourceRoot = options?.sourceRoot;
+    this.routingMode = options?.routingMode;
+    this.forceOfflineRouting = Boolean(
+      options?.forceOfflineRouting || options?.routingMode === "offline",
+    );
+    this.typesafeEnv = options?.typesafeEnv;
+    this.typesafeTransport = options?.typesafeTransport;
+  }
+
+  private resolveActiveJudgmentProvider(): MissionJudgmentProvider | undefined {
+    if (this.judgmentProvider) {
+      return this.judgmentProvider;
+    }
+    if (this.forceOfflineRouting || this.routingMode === "offline") {
+      return undefined;
+    }
+    const isImplicitVitestRun =
+      Boolean(process.env.VITEST) &&
+      this.routingMode === undefined &&
+      this.typesafeEnv === undefined &&
+      this.typesafeTransport === undefined;
+    if (isImplicitVitestRun) {
+      return undefined;
+    }
+
+    const liveProvider = createLiveTypeSafeJudgmentProvider({
+      env: this.typesafeEnv,
+      transport: this.typesafeTransport,
+    });
+    if (!liveProvider && this.routingMode === "live") {
+      throw new TypeSafeRouterError(
+        "INVALID_CONFIG",
+        "OpGeneral routingMode 'live' requires TYPESAFE_API_KEY, JEV_TYPESAFE_API_KEY, or JEV_HOTEP_API_KEY.",
+      );
+    }
+    if (liveProvider) {
+      this.judgmentProvider = liveProvider;
+    }
+    return liveProvider ?? undefined;
   }
 
   // ===========================================================================
@@ -340,14 +438,14 @@ export class OpGeneral extends EventEmitter<GeneralEvents> {
    */
   async planOperation(directive: Directive): Promise<OpPlan> {
     if (this.planningInProgress) {
-      throw new Error('Planning already in progress');
+      throw new Error("Planning already in progress");
     }
 
     this.planningInProgress = true;
-    this.emit('general:planning', { directive });
+    this.emit("general:planning", { directive });
 
     try {
-      const useCodexFastPath = (this.llm as any).getProvider?.() === 'codex';
+      const useCodexFastPath = (this.llm as any).getProvider?.() === "codex";
       const userPrompt = useCodexFastPath
         ? this.buildCodexFastPlanningPrompt(directive)
         : this.buildPlanningPrompt(directive);
@@ -361,18 +459,31 @@ export class OpGeneral extends EventEmitter<GeneralEvents> {
         // Codex fast path uses a tighter 4096 cap (latency-sensitive — a slow call trips
         // the client-side planning timeout); the standard API path keeps 8192 so large
         // plans don't silently truncate and degrade to a fallback plan.
-        { maxTokens: useCodexFastPath ? 4096 : 8192, temperature: useCodexFastPath ? 0.3 : 0.4 }
+        {
+          maxTokens: useCodexFastPath ? 4096 : 8192,
+          temperature: useCodexFastPath ? 0.3 : 0.4,
+        },
       );
 
-      const plan = this.parsePlanResponse(response, directive);
+      let plan = this.parsePlanResponse(response, directive);
+      const activeProvider = this.resolveActiveJudgmentProvider();
+      if (activeProvider) {
+        const asyncDecision = await this.routeDirectiveAsync(
+          directive,
+          activeProvider,
+          plan.targets,
+          plan.summary,
+        );
+        plan = this.applyRoutingDecisionToPlan(plan, asyncDecision);
+      }
       const review = this.reviewPlan(plan);
       this.currentPlan = plan;
-      this.emit('general:plan_ready', { plan });
-      this.emit('general:review', { planId: plan.id, review });
+      this.emit("general:plan_ready", { plan });
+      this.emit("general:review", { planId: plan.id, review });
       return plan;
     } catch (error: any) {
       const msg = error.message || String(error);
-      this.emit('general:plan_failed', { error: msg });
+      this.emit("general:plan_failed", { error: msg });
       throw error;
     } finally {
       this.planningInProgress = false;
@@ -404,60 +515,138 @@ export class OpGeneral extends EventEmitter<GeneralEvents> {
     prompt += `You must respond with a JSON object matching the OpPlan schema.\n\n`;
     prompt += `Your response must be ONLY valid JSON wrapped in a \`\`\`json code block. No other text.\n\n`;
     prompt += `### Required JSON Schema:\n`;
-    prompt += '```\n';
-    prompt += JSON.stringify({
-      codename: 'string — creative military-style codename',
-      summary: 'string — 2-3 sentence strategic summary',
-      targets: [{ address: 'string', expectedType: 'string (web_application|api|network|host|cloud)', priority: 'number 1-5', rationale: 'string' }],
-      objectives: [{ description: 'string', priority: 'number 1-5', successCriteria: 'string', phase: 'string (reconnaissance|weaponization|delivery|exploitation|installation|command_and_control|actions_on_objectives)' }],
-      operators: [{ archetype: 'string (recon|scanner|exploiter|infiltrator|exfiltrator|ghost|coordinator|analyst)', count: 'number', deployPhase: 'string', briefing: 'string' }],
-      opsecLevel: 'string (silent|covert|loud)',
-      phaseStrategy: [{ phase: 'string', priority: 'number 1-7', expectedDuration: 'string', objectives: ['string'], advanceCriteria: 'string' }],
-      roe: { scope: ['string — in-scope targets/ranges'], exclusions: ['string — out-of-scope'], maxDetections: 'number', destructiveAllowed: 'boolean', requireApproval: ['string — MITRE technique IDs'] },
-      contingencies: [{ trigger: 'string', action: 'string', priority: 'string (low|medium|high|critical)' }],
-      complexity: 'string (trivial|low|moderate|high|extreme)',
-      rationale: 'string — 2-4 sentences explaining your strategic reasoning',
-      missionFamily: 'string (web_api|ai_red_team|cloud_infra|smart_contract|code_supply_chain|crypto_secrets|reverse_binary|agent_warfare|social_osint|reporting_remediation)',
-      huntLanes: [{
-        family: 'mission family',
-        target: 'string',
-        priority: 'number',
-        pressureQuestion: 'string — the boundary this lane interrogates',
-        strangeRouteHypothesis: 'string — what weird composition might happen',
-        specialistArchetypes: ['operator archetype strings'],
-        resourcePackIds: ['resource ids'],
-        containment: 'string — how probes stay scoped and safe',
-      }],
-      authorityReceipts: [{ action: 'route_preview|mission_execution|network_request|command_execution|model_call|autonomous_execution|human_review', target: 'string', reason: 'string', requiredBefore: 'string phase/gate' }],
-      evidenceContract: {
-        requiredArtifacts: ['string'],
-        minimumConfidence: 'number 0-100',
-        provenanceFloor: 'weak|context|tool|replayable',
-        claimRules: ['string'],
-        retestRequired: 'boolean',
+    prompt += "```\n";
+    prompt += JSON.stringify(
+      {
+        codename: "string — creative military-style codename",
+        summary: "string — 2-3 sentence strategic summary",
+        targets: [
+          {
+            address: "string",
+            expectedType: "string (web_application|api|network|host|cloud)",
+            priority: "number 1-5",
+            rationale: "string",
+          },
+        ],
+        objectives: [
+          {
+            description: "string",
+            priority: "number 1-5",
+            successCriteria: "string",
+            phase:
+              "string (reconnaissance|weaponization|delivery|exploitation|installation|command_and_control|actions_on_objectives)",
+          },
+        ],
+        operators: [
+          {
+            archetype:
+              "string (recon|scanner|exploiter|infiltrator|exfiltrator|ghost|coordinator|analyst)",
+            count: "number",
+            deployPhase: "string",
+            briefing: "string",
+          },
+        ],
+        opsecLevel: "string (silent|covert|loud)",
+        phaseStrategy: [
+          {
+            phase: "string",
+            priority: "number 1-7",
+            expectedDuration: "string",
+            objectives: ["string"],
+            advanceCriteria: "string",
+          },
+        ],
+        roe: {
+          scope: ["string — in-scope targets/ranges"],
+          exclusions: ["string — out-of-scope"],
+          maxDetections: "number",
+          destructiveAllowed: "boolean",
+          requireApproval: ["string — MITRE technique IDs"],
+        },
+        contingencies: [
+          {
+            trigger: "string",
+            action: "string",
+            priority: "string (low|medium|high|critical)",
+          },
+        ],
+        complexity: "string (trivial|low|moderate|high|extreme)",
+        rationale: "string — 2-4 sentences explaining your strategic reasoning",
+        missionFamily:
+          "string (web_api|ai_red_team|cloud_infra|smart_contract|code_audit|code_supply_chain|crypto_secrets|reverse_binary|agent_warfare|social_osint|reporting_remediation)",
+        huntLanes: [
+          {
+            family: "mission family",
+            target: "string",
+            priority: "number",
+            pressureQuestion: "string — the boundary this lane interrogates",
+            strangeRouteHypothesis:
+              "string — what weird composition might happen",
+            specialistArchetypes: ["operator archetype strings"],
+            resourcePackIds: ["resource ids"],
+            containment: "string — how probes stay scoped and safe",
+          },
+        ],
+        authorityReceipts: [
+          {
+            action:
+              "route_preview|mission_execution|network_request|command_execution|model_call|autonomous_execution|human_review",
+            target: "string",
+            reason: "string",
+            requiredBefore: "string phase/gate",
+          },
+        ],
+        evidenceContract: {
+          requiredArtifacts: ["string"],
+          minimumConfidence: "number 0-100",
+          provenanceFloor: "weak|context|tool|replayable",
+          claimRules: ["string"],
+          retestRequired: "boolean",
+        },
+        workOrders: [
+          {
+            family: "mission family",
+            title: "string",
+            hypothesis: "string",
+            suspectedBoundary: "string",
+            target: "string",
+            assignedArchetype: "operator archetype string",
+            kind: "prove|disprove|map_impact|owner_control|retest_design|tool_probe",
+            safeProbe: "string",
+            expectedSignal: "string",
+            evidenceArtifact: "string",
+            falsifier: "string",
+            retest: "string",
+            requiresReceipt: "boolean",
+            toolHints: ["string"],
+            priority: "number",
+          },
+        ],
+        toolPlan: [
+          {
+            family: "mission family",
+            primaryTools: ["string"],
+            fallbackTools: ["string"],
+            readinessNotes: ["string"],
+          },
+        ],
+        critic: {
+          strongestAssumption: "string",
+          missingCoverage: ["string"],
+          weirdRoute: "string",
+          proofPressure: "string",
+          nextQuestion: "string",
+        },
+        learning: {
+          memoryCandidates: ["string"],
+          doctrineNotes: ["string"],
+          replaySuites: ["string"],
+        },
       },
-      workOrders: [{
-        family: 'mission family',
-        title: 'string',
-        hypothesis: 'string',
-        suspectedBoundary: 'string',
-        target: 'string',
-        assignedArchetype: 'operator archetype string',
-        kind: 'prove|disprove|map_impact|owner_control|retest_design|tool_probe',
-        safeProbe: 'string',
-        expectedSignal: 'string',
-        evidenceArtifact: 'string',
-        falsifier: 'string',
-        retest: 'string',
-        requiresReceipt: 'boolean',
-        toolHints: ['string'],
-        priority: 'number',
-      }],
-      toolPlan: [{ family: 'mission family', primaryTools: ['string'], fallbackTools: ['string'], readinessNotes: ['string'] }],
-      critic: { strongestAssumption: 'string', missingCoverage: ['string'], weirdRoute: 'string', proofPressure: 'string', nextQuestion: 'string' },
-      learning: { memoryCandidates: ['string'], doctrineNotes: ['string'], replaySuites: ['string'] },
-    }, null, 2);
-    prompt += '\n```\n';
+      null,
+      2,
+    );
+    prompt += "\n```\n";
 
     return prompt;
   }
@@ -473,10 +662,10 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   private buildCodexFastPlanningPrompt(directive: Directive): string {
     let prompt = `## CODEX AUTOHUNT DIRECTIVE\n\n`;
     prompt += `Objective: ${directive.objective}\n`;
-    prompt += `Constraints: ${directive.constraints || 'Authorized scope only. Route preview and evidence planning first.'}\n`;
-    prompt += `Scope: ${directive.scopeHints || 'Use only targets explicitly named by the directive.'}\n`;
-    prompt += `Urgency: ${directive.urgency || 'normal'}\n`;
-    prompt += `OPSEC: ${directive.opsecPreference || 'covert'}\n\n`;
+    prompt += `Constraints: ${directive.constraints || "Authorized scope only. Route preview and evidence planning first."}\n`;
+    prompt += `Scope: ${directive.scopeHints || "Use only targets explicitly named by the directive."}\n`;
+    prompt += `Urgency: ${directive.urgency || "normal"}\n`;
+    prompt += `OPSEC: ${directive.opsecPreference || "covert"}\n\n`;
     prompt += `Build a useful zero-day autohunt OpPlan with these exact top-level keys:\n`;
     prompt += `codename, summary, targets, objectives, operators, opsecLevel, phaseStrategy, roe, contingencies, complexity, rationale, missionFamily, huntLanes, authorityReceipts, evidenceContract, workOrders, toolPlan, critic, learning.\n\n`;
     prompt += `Minimum content:\n`;
@@ -502,7 +691,9 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     if (codeBlockMatch) {
       try {
         json = JSON.parse(codeBlockMatch[1].trim());
-      } catch { /* fall through */ }
+      } catch {
+        /* fall through */
+      }
     }
 
     // Try raw JSON
@@ -511,7 +702,9 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       if (jsonMatch) {
         try {
           json = JSON.parse(jsonMatch[0]);
-        } catch { /* fall through */ }
+        } catch {
+          /* fall through */
+        }
       }
     }
 
@@ -521,49 +714,95 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     }
 
     const directiveTargets = this.extractTargetsFromDirective(directive);
-    const parsedTargets: OpPlanTarget[] = Array.isArray(json.targets) ? json.targets.map((t: any, i: number) => {
-      if (typeof t === 'string') {
-        return { address: t, expectedType: 'web_application', priority: i + 1, rationale: 'Model shorthand target' };
-      }
-      return {
-        address: t.address || t.url || t.target || t.name || '',
-        expectedType: t.expectedType || t.type || 'web_application',
-        priority: t.priority || i + 1,
-        rationale: t.rationale || t.reason || '',
-      };
-    }).filter((t: OpPlanTarget) => t.address) : [];
-    const targets: OpPlanTarget[] = parsedTargets.length ? parsedTargets : directiveTargets;
-    const roeScope: string[] = Array.isArray(json.roe?.scope) && json.roe.scope.length
-      ? json.roe.scope
-      : targets.map(t => t.address);
-    const complexityValue = typeof json.complexity === 'string' ? json.complexity : json.complexity?.level;
+    const parsedTargets: OpPlanTarget[] = Array.isArray(json.targets)
+      ? json.targets
+          .map((t: any, i: number) => {
+            if (typeof t === "string") {
+              return {
+                address: t,
+                expectedType: "web_application",
+                priority: i + 1,
+                rationale: "Model shorthand target",
+              };
+            }
+            return {
+              address: t.address || t.url || t.target || t.name || "",
+              expectedType: t.expectedType || t.type || "web_application",
+              priority: t.priority || i + 1,
+              rationale: t.rationale || t.reason || "",
+            };
+          })
+          .filter((t: OpPlanTarget) => t.address)
+      : [];
+    const targets: OpPlanTarget[] = parsedTargets.length
+      ? parsedTargets
+      : directiveTargets;
+    const roeScope: string[] =
+      Array.isArray(json.roe?.scope) && json.roe.scope.length
+        ? json.roe.scope
+        : targets.map((t) => t.address);
+    const complexityValue =
+      typeof json.complexity === "string"
+        ? json.complexity
+        : json.complexity?.level;
 
     // Construct validated OpPlan from parsed JSON
     const plan: OpPlan = {
       id: randomUUID(),
-      codename: json.codename || 'OPERATION TEMPEST',
+      codename: json.codename || "OPERATION TEMPEST",
       summary: json.summary || directive.objective,
       targets,
-      objectives: Array.isArray(json.objectives) ? json.objectives.map((o: any, i: number) => ({
-        description: typeof o === 'string' ? o : (o.description || o.objective || o.title || ''),
-        priority: o.priority || i + 1,
-        successCriteria: o.successCriteria || '',
-        phase: o.phase || 'reconnaissance',
-      })) : [{ description: directive.objective, priority: 1, successCriteria: 'Findings reported', phase: 'reconnaissance' }],
-      operators: Array.isArray(json.operators) ? json.operators.map((op: any) => ({
-        archetype: this.normalizeOperatorArchetype(typeof op === 'string' ? op : op.archetype, 'recon'),
-        count: this.boundedPriority(op.count, 1),
-        deployPhase: op.deployPhase || 'reconnaissance',
-        briefing: typeof op === 'string' ? `${op} operator assigned by shorthand` : (op.briefing || ''),
-      })) : [{ archetype: 'recon' as OperatorArchetype, count: 1, deployPhase: 'reconnaissance', briefing: 'Standard recon' }],
-      opsecLevel: (['silent', 'covert', 'loud'].includes(json.opsecLevel) ? json.opsecLevel : directive.opsecPreference || 'covert') as OpsecLevel,
-      phaseStrategy: Array.isArray(json.phaseStrategy) ? json.phaseStrategy.map((p: any, i: number) => ({
-        phase: p.phase || 'reconnaissance',
-        priority: p.priority || i + 1,
-        expectedDuration: p.expectedDuration || 'unknown',
-        objectives: Array.isArray(p.objectives) ? p.objectives : [],
-        advanceCriteria: p.advanceCriteria || '',
-      })) : [],
+      objectives: Array.isArray(json.objectives)
+        ? json.objectives.map((o: any, i: number) => ({
+            description:
+              typeof o === "string"
+                ? o
+                : o.description || o.objective || o.title || "",
+            priority: o.priority || i + 1,
+            successCriteria: o.successCriteria || "",
+            phase: o.phase || "reconnaissance",
+          }))
+        : [
+            {
+              description: directive.objective,
+              priority: 1,
+              successCriteria: "Findings reported",
+              phase: "reconnaissance",
+            },
+          ],
+      operators: Array.isArray(json.operators)
+        ? json.operators.map((op: any) => ({
+            archetype: this.normalizeOperatorArchetype(
+              typeof op === "string" ? op : op.archetype,
+              "recon",
+            ),
+            count: this.boundedPriority(op.count, 1),
+            deployPhase: op.deployPhase || "reconnaissance",
+            briefing:
+              typeof op === "string"
+                ? `${op} operator assigned by shorthand`
+                : op.briefing || "",
+          }))
+        : [
+            {
+              archetype: "recon" as OperatorArchetype,
+              count: 1,
+              deployPhase: "reconnaissance",
+              briefing: "Standard recon",
+            },
+          ],
+      opsecLevel: (["silent", "covert", "loud"].includes(json.opsecLevel)
+        ? json.opsecLevel
+        : directive.opsecPreference || "covert") as OpsecLevel,
+      phaseStrategy: Array.isArray(json.phaseStrategy)
+        ? json.phaseStrategy.map((p: any, i: number) => ({
+            phase: p.phase || "reconnaissance",
+            priority: p.priority || i + 1,
+            expectedDuration: p.expectedDuration || "unknown",
+            objectives: Array.isArray(p.objectives) ? p.objectives : [],
+            advanceCriteria: p.advanceCriteria || "",
+          }))
+        : [],
       roe: {
         scope: roeScope,
         exclusions: json.roe?.exclusions || [],
@@ -571,14 +810,20 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
         destructiveAllowed: json.roe?.destructiveAllowed ?? false,
         requireApproval: json.roe?.requireApproval || [],
       },
-      contingencies: Array.isArray(json.contingencies) ? json.contingencies.map((c: any) => ({
-        trigger: c.trigger || '',
-        action: c.action || '',
-        priority: c.priority || 'medium',
-      })) : [],
-      complexity: (['trivial', 'low', 'moderate', 'high', 'extreme'].includes(complexityValue) ? complexityValue : 'moderate') as OpPlan['complexity'],
-      rationale: json.rationale || '',
-      missionFamily: 'web_api',
+      contingencies: Array.isArray(json.contingencies)
+        ? json.contingencies.map((c: any) => ({
+            trigger: c.trigger || "",
+            action: c.action || "",
+            priority: c.priority || "medium",
+          }))
+        : [],
+      complexity: (["trivial", "low", "moderate", "high", "extreme"].includes(
+        complexityValue,
+      )
+        ? complexityValue
+        : "moderate") as OpPlan["complexity"],
+      rationale: json.rationale || "",
+      missionFamily: "web_api",
       huntLanes: [],
       authorityReceipts: [],
       evidenceContract: this.defaultEvidenceContract(),
@@ -601,26 +846,69 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
 
     const plan: OpPlan = {
       id: randomUUID(),
-      codename: 'OPERATION FALLBACK',
+      codename: "OPERATION FALLBACK",
       summary: `Fallback plan for: ${directive.objective}`,
       targets,
       objectives: [
-        { description: 'Enumerate attack surface', priority: 1, successCriteria: 'Complete host/service enumeration', phase: 'reconnaissance' },
-        { description: 'Identify vulnerabilities', priority: 2, successCriteria: 'Vulnerability findings reported', phase: 'weaponization' },
-        { description: 'Validate and assess impact', priority: 3, successCriteria: 'Risk assessment complete', phase: 'actions_on_objectives' },
+        {
+          description: "Enumerate attack surface",
+          priority: 1,
+          successCriteria: "Complete host/service enumeration",
+          phase: "reconnaissance",
+        },
+        {
+          description: "Identify vulnerabilities",
+          priority: 2,
+          successCriteria: "Vulnerability findings reported",
+          phase: "weaponization",
+        },
+        {
+          description: "Validate and assess impact",
+          priority: 3,
+          successCriteria: "Risk assessment complete",
+          phase: "actions_on_objectives",
+        },
       ],
       operators: [
-        { archetype: 'recon', count: 1, deployPhase: 'reconnaissance', briefing: 'Standard recon' },
-        { archetype: 'scanner', count: 1, deployPhase: 'weaponization', briefing: 'Standard vulnerability scan' },
-        { archetype: 'analyst', count: 1, deployPhase: 'actions_on_objectives', briefing: 'Standard analysis' },
+        {
+          archetype: "recon",
+          count: 1,
+          deployPhase: "reconnaissance",
+          briefing: "Standard recon",
+        },
+        {
+          archetype: "scanner",
+          count: 1,
+          deployPhase: "weaponization",
+          briefing: "Standard vulnerability scan",
+        },
+        {
+          archetype: "analyst",
+          count: 1,
+          deployPhase: "actions_on_objectives",
+          briefing: "Standard analysis",
+        },
       ],
-      opsecLevel: directive.opsecPreference || 'covert',
+      opsecLevel: directive.opsecPreference || "covert",
       phaseStrategy: [],
-      roe: { scope: targets.map(t => t.address), exclusions: [], maxDetections: 5, destructiveAllowed: false, requireApproval: [] },
-      contingencies: [{ trigger: 'Detection events > 3', action: 'Pause and reassess', priority: 'high' }],
-      complexity: 'moderate',
-      rationale: 'Fallback plan generated due to LLM parsing failure. Conservative approach.',
-      missionFamily: 'web_api',
+      roe: {
+        scope: targets.map((t) => t.address),
+        exclusions: [],
+        maxDetections: 5,
+        destructiveAllowed: false,
+        requireApproval: [],
+      },
+      contingencies: [
+        {
+          trigger: "Detection events > 3",
+          action: "Pause and reassess",
+          priority: "high",
+        },
+      ],
+      complexity: "moderate",
+      rationale:
+        "Fallback plan generated due to LLM parsing failure. Conservative approach.",
+      missionFamily: "web_api",
       huntLanes: [],
       authorityReceipts: [],
       evidenceContract: this.defaultEvidenceContract(),
@@ -642,16 +930,26 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
    */
   private enrichPlan(plan: OpPlan, json: any, directive: Directive): OpPlan {
     const families = this.inferMissionFamilies(directive, json, plan);
-    const primaryFamily = this.normalizeMissionFamily(json?.missionFamily, families[0] || 'web_api');
+    const primaryFamily = this.normalizeMissionFamily(
+      json?.missionFamily,
+      families[0] || "web_api",
+    );
 
-    plan.missionFamily = primaryFamily || 'web_api';
+    plan.missionFamily = primaryFamily || "web_api";
     if (!plan.roe.scope.length && plan.targets.length) {
-      plan.roe.scope = plan.targets.map(target => target.address).filter(Boolean);
+      plan.roe.scope = plan.targets
+        .map((target) => target.address)
+        .filter(Boolean);
     }
 
     plan.huntLanes = this.normalizeHuntLanes(json?.huntLanes, families, plan);
-    plan.authorityReceipts = this.normalizeAuthorityReceipts(json?.authorityReceipts, plan);
-    plan.evidenceContract = this.normalizeEvidenceContract(json?.evidenceContract);
+    plan.authorityReceipts = this.normalizeAuthorityReceipts(
+      json?.authorityReceipts,
+      plan,
+    );
+    plan.evidenceContract = this.normalizeEvidenceContract(
+      json?.evidenceContract,
+    );
     plan.workOrders = this.normalizeWorkOrders(json?.workOrders, plan);
     plan.toolPlan = this.normalizeToolPlan(json?.toolPlan, families);
     plan.critic = this.normalizeCritique(json?.critic, plan);
@@ -664,11 +962,11 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       blockers: review.blockers,
       warnings: review.warnings,
       criteria: [
-        'Scope is explicit and target-bound',
-        'Specialist work orders exist for each active lane',
-        'Claims require evidence before promotion',
-        'Retests are queued for every finding',
-        'Receipts are named before active execution',
+        "Scope is explicit and target-bound",
+        "Specialist work orders exist for each active lane",
+        "Claims require evidence before promotion",
+        "Retests are queued for every finding",
+        "Receipts are named before active execution",
       ],
       nextApproval: review.requiredReceipts[0]
         ? `${review.requiredReceipts[0].action}:${review.requiredReceipts[0].target}`
@@ -681,18 +979,18 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   private defaultEvidenceContract(): OpPlanEvidenceContract {
     return {
       requiredArtifacts: [
-        'route preview or scope receipt',
-        'operator transcript or tool output',
-        'evidence ID for every promoted finding',
-        'falsifier note for every high-confidence hypothesis',
-        'retest criteria before READY',
+        "route preview or scope receipt",
+        "operator transcript or tool output",
+        "evidence ID for every promoted finding",
+        "falsifier note for every high-confidence hypothesis",
+        "retest criteria before READY",
       ],
       minimumConfidence: 70,
-      provenanceFloor: 'context',
+      provenanceFloor: "context",
       claimRules: [
-        'Treat every claim as a hypothesis until evidence is attached',
-        'Do not promote model willingness, taxonomy labels, or resource names as proof',
-        'Record safe probes and falsifiers alongside positive signals',
+        "Treat every claim as a hypothesis until evidence is attached",
+        "Do not promote model willingness, taxonomy labels, or resource names as proof",
+        "Record safe probes and falsifiers alongside positive signals",
       ],
       retestRequired: true,
     };
@@ -700,19 +998,23 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
 
   private defaultCritique(): OpPlanCritique {
     return {
-      strongestAssumption: 'The directive names a real authorized scope and not merely an interesting target.',
+      strongestAssumption:
+        "The directive names a real authorized scope and not merely an interesting target.",
       missingCoverage: [],
-      weirdRoute: 'Look for a boundary collapse between valid local components before assuming a single obvious bug.',
-      proofPressure: 'Prefer evidence that a second operator could replay over clever narrative confidence.',
-      nextQuestion: 'What would make this plan wrong, stale, or unsafe before the first active probe?',
+      weirdRoute:
+        "Look for a boundary collapse between valid local components before assuming a single obvious bug.",
+      proofPressure:
+        "Prefer evidence that a second operator could replay over clever narrative confidence.",
+      nextQuestion:
+        "What would make this plan wrong, stale, or unsafe before the first active probe?",
     };
   }
 
   private defaultMissionGate(): OpPlanMissionGate {
     return {
-      status: 'hold',
+      status: "hold",
       score: 0,
-      blockers: ['Plan has not been reviewed yet'],
+      blockers: ["Plan has not been reviewed yet"],
       warnings: [],
       criteria: [],
     };
@@ -721,61 +1023,146 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   private defaultLearningDirective(): OpPlanLearningDirective {
     return {
       memoryCandidates: [],
-      doctrineNotes: ['File only evidence-backed improvements after the run review.'],
-      replaySuites: ['route-regression-smoke', 'evidence-contract-smoke'],
+      doctrineNotes: [
+        "File only evidence-backed improvements after the run review.",
+      ],
+      replaySuites: ["route-regression-smoke", "evidence-contract-smoke"],
     };
   }
 
-  private inferMissionFamilies(directive: Directive, json: any, plan: OpPlan): MissionFamily[] {
+  private inferMissionFamilies(
+    directive: Directive,
+    json: Record<string, unknown> | null | undefined,
+    plan: OpPlan,
+  ): MissionFamily[] {
     const families: MissionFamily[] = [];
     const push = (value: unknown) => {
       const family = this.normalizeMissionFamily(value);
       if (family && !families.includes(family)) families.push(family);
     };
 
-    push(json?.missionFamily);
-    if (Array.isArray(json?.huntLanes)) {
-      for (const lane of json.huntLanes) push(lane?.family);
+    const explicitModelFamily =
+      this.normalizeMissionFamily(json?.missionFamily) ?? null;
+    const explicitHuntLaneFamilies: MissionFamily[] = [];
+    const rawLanes = json?.huntLanes;
+    if (Array.isArray(rawLanes)) {
+      for (const lane of rawLanes) {
+        const laneRecord =
+          lane && typeof lane === "object"
+            ? (lane as Record<string, unknown>)
+            : undefined;
+        const laneFamily = this.normalizeMissionFamily(laneRecord?.family);
+        if (laneFamily && !explicitHuntLaneFamilies.includes(laneFamily)) {
+          explicitHuntLaneFamilies.push(laneFamily);
+        }
+      }
     }
 
-    const text = [
-      directive.objective,
-      directive.constraints || '',
-      directive.scopeHints || '',
-      plan.summary,
-      ...plan.targets.map(target => `${target.address} ${target.expectedType}`),
-    ].join(' ').toLowerCase();
+    push(explicitModelFamily);
+    for (const laneFamily of explicitHuntLaneFamilies) {
+      push(laneFamily);
+    }
 
-    if (/(ai\s*red|llm|jailbreak|prompt|model|rag|agent boundary|tool use|memory)/.test(text)) push('ai_red_team');
-    if (/(agent|delegate|handoff|tool|memory|orchestrator|workflow drift)/.test(text)) push('agent_warfare');
-    if (/(repo|dependency|package|npm|pip|github|workflow|ci\/cd|slsa|sbom|secret)/.test(text)) push('code_supply_chain');
-    if (/(cloud|aws|gcp|azure|iam|kubernetes|container|terraform)/.test(text)) push('cloud_infra');
-    if (/(contract|solidity|wallet|defi|transaction|token|chain)/.test(text)) push('smart_contract');
-    if (/(crypto|key|cipher|hash|signature|jwt|secret|credential)/.test(text)) push('crypto_secrets');
-    if (/(binary|reverse|firmware|apk|pwn|ctf|exploit chain)/.test(text)) push('reverse_binary');
-    if (/(osint|public source|identity|people|social|phish simulation)/.test(text)) push('social_osint');
-    if (/(report|remediation|leadership|executive|acceptance criteria|fix plan)/.test(text)) push('reporting_remediation');
-    if (/(web|api|http|endpoint|route|owasp|url|domain|app|localhost|127\.0\.0\.1)/.test(text)) push('web_api');
+    const decision = evaluateMissionRouteOffline({
+      directive,
+      planSummary: plan.summary,
+      targets: plan.targets,
+      sourceRoot:
+        this.configuredSourceRoot ?? process.env.T3MP3ST_SOURCE_ROOT ?? null,
+      explicitModelFamily,
+      explicitHuntLaneFamilies,
+    });
+    this.lastRoutingDecision = decision;
+    this.emit("general:route_decision", { decision });
 
-    if (!families.length) push('web_api');
+    for (const selected of decision.selectedFamilies) {
+      push(selected);
+    }
+
+    if (!families.length) push("web_api");
     return families;
   }
 
-  private normalizeMissionFamily(value: unknown, fallback?: MissionFamily): MissionFamily | undefined {
-    const families: MissionFamily[] = ['web_api', 'ai_red_team', 'cloud_infra', 'smart_contract', 'code_supply_chain', 'crypto_secrets', 'reverse_binary', 'agent_warfare', 'social_osint', 'reporting_remediation'];
-    const family = String(value || '');
-    return families.includes(family as MissionFamily) ? family as MissionFamily : fallback;
+  private applyRoutingDecisionToPlan(
+    plan: OpPlan,
+    decision: MissionRouteDecision,
+  ): OpPlan {
+    const families = decision.selectedFamilies.length
+      ? [...decision.selectedFamilies]
+      : (["web_api"] as MissionFamily[]);
+    plan.missionFamily = decision.primaryFamily || families[0] || "web_api";
+    plan.huntLanes = this.normalizeHuntLanes(undefined, families, plan);
+    plan.workOrders = this.normalizeWorkOrders(undefined, plan);
+    plan.toolPlan = this.normalizeToolPlan(undefined, families);
+    plan.learning = this.normalizeLearningDirective(plan.learning, families);
+    const review = this.reviewPlan(plan);
+    plan.missionGate = {
+      status: review.status,
+      score: review.score,
+      blockers: review.blockers,
+      warnings: review.warnings,
+      criteria: plan.missionGate.criteria,
+      nextApproval: review.requiredReceipts[0]
+        ? `${review.requiredReceipts[0].action}:${review.requiredReceipts[0].target}`
+        : undefined,
+    };
+    return plan;
   }
 
-  private normalizeOperatorArchetype(value: unknown, fallback: OperatorArchetype = 'analyst'): OperatorArchetype {
-    const archetypes: OperatorArchetype[] = ['recon', 'scanner', 'exploiter', 'infiltrator', 'exfiltrator', 'ghost', 'coordinator', 'analyst'];
-    const archetype = String(value || '');
-    return archetypes.includes(archetype as OperatorArchetype) ? archetype as OperatorArchetype : fallback;
+  private normalizeMissionFamily(
+    value: unknown,
+    fallback?: MissionFamily,
+  ): MissionFamily | undefined {
+    const families: MissionFamily[] = [
+      "web_api",
+      "ai_red_team",
+      "cloud_infra",
+      "smart_contract",
+      "code_audit",
+      "code_supply_chain",
+      "crypto_secrets",
+      "reverse_binary",
+      "agent_warfare",
+      "social_osint",
+      "reporting_remediation",
+    ];
+    const family = String(value || "");
+    return families.includes(family as MissionFamily)
+      ? (family as MissionFamily)
+      : fallback;
+  }
+
+  private normalizeOperatorArchetype(
+    value: unknown,
+    fallback: OperatorArchetype = "analyst",
+  ): OperatorArchetype {
+    const archetypes: OperatorArchetype[] = [
+      "recon",
+      "scanner",
+      "exploiter",
+      "infiltrator",
+      "exfiltrator",
+      "ghost",
+      "coordinator",
+      "analyst",
+    ];
+    const archetype = String(value || "");
+    return archetypes.includes(archetype as OperatorArchetype)
+      ? (archetype as OperatorArchetype)
+      : fallback;
   }
 
   private normalizeStringList(value: unknown): string[] {
-    if (Array.isArray(value)) return value.map(String).map(item => item.trim()).filter(Boolean);
-    if (typeof value === 'string' && value.trim()) return value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+    if (Array.isArray(value))
+      return value
+        .map(String)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    if (typeof value === "string" && value.trim())
+      return value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
     return [];
   }
 
@@ -786,108 +1173,174 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   }
 
   private resourcePackIdsForFamily(family: MissionFamily): string[] {
-    return RESOURCE_PACKS
-      .filter(resource => resource.missionFamilies.includes(family))
-      .map(resource => resource.id)
+    return RESOURCE_PACKS.filter((resource) =>
+      resource.missionFamilies.includes(family),
+    )
+      .map((resource) => resource.id)
       .slice(0, 4);
   }
 
   private toolIdsForFamily(family: MissionFamily): string[] {
-    return adaptersForFamily(family)
-      .map(adapter => adapter.id)
-      .slice(0, 5);
+    const adapterIds = adaptersForFamily(family).map((adapter) => adapter.id);
+    if (family === "code_audit") {
+      return ["code_audit_scan", "binary_sink_scan", ...adapterIds].slice(0, 5);
+    }
+    return adapterIds.slice(0, 5);
   }
 
-  private normalizeHuntLanes(value: unknown, families: MissionFamily[], plan: OpPlan): OpPlanHuntLane[] {
-    const targets = plan.targets.length ? plan.targets.map(target => target.address) : ['local-lab'];
+  private normalizeHuntLanes(
+    value: unknown,
+    families: MissionFamily[],
+    plan: OpPlan,
+  ): OpPlanHuntLane[] {
+    const targets = plan.targets.length
+      ? plan.targets.map((target) => target.address)
+      : ["local-lab"];
     if (Array.isArray(value) && value.length) {
       return value.map((lane: any, index: number) => {
-        const family = this.normalizeMissionFamily(lane?.family, families[index % families.length] || plan.missionFamily) || 'web_api';
-        const specialists = this.normalizeStringList(lane?.specialistArchetypes).map(item => this.normalizeOperatorArchetype(item)).slice(0, 4);
-        const resources = this.normalizeStringList(lane?.resourcePackIds).filter(id => RESOURCE_PACKS.some(resource => resource.id === id)).slice(0, 5);
+        const family =
+          this.normalizeMissionFamily(
+            lane?.family,
+            families[index % families.length] || plan.missionFamily,
+          ) || "web_api";
+        const specialists = this.normalizeStringList(lane?.specialistArchetypes)
+          .map((item) => this.normalizeOperatorArchetype(item))
+          .slice(0, 4);
+        const resources = this.normalizeStringList(lane?.resourcePackIds)
+          .filter((id) => RESOURCE_PACKS.some((resource) => resource.id === id))
+          .slice(0, 5);
         return {
           family,
-          target: String(lane?.target || targets[index % targets.length] || 'local-lab'),
+          target: String(
+            lane?.target || targets[index % targets.length] || "local-lab",
+          ),
           priority: this.boundedPriority(lane?.priority, index + 1),
-          pressureQuestion: String(lane?.pressureQuestion || `What boundary can fail when ${family} components compose unexpectedly?`),
-          strangeRouteHypothesis: String(lane?.strangeRouteHypothesis || this.defaultStrangeRouteHypothesis(family)),
-          specialistArchetypes: specialists.length ? specialists : this.defaultSpecialistsForFamily(family),
-          resourcePackIds: resources.length ? resources : this.resourcePackIdsForFamily(family),
-          containment: String(lane?.containment || 'Use route preview, local fixtures, read-only probes, or explicit receipts before active action.'),
+          pressureQuestion: String(
+            lane?.pressureQuestion ||
+              `What boundary can fail when ${family} components compose unexpectedly?`,
+          ),
+          strangeRouteHypothesis: String(
+            lane?.strangeRouteHypothesis ||
+              this.defaultStrangeRouteHypothesis(family),
+          ),
+          specialistArchetypes: specialists.length
+            ? specialists
+            : this.defaultSpecialistsForFamily(family),
+          resourcePackIds: resources.length
+            ? resources
+            : this.resourcePackIdsForFamily(family),
+          containment: String(
+            lane?.containment ||
+              "Use route preview, local fixtures, read-only probes, or explicit receipts before active action.",
+          ),
         };
       });
     }
 
     return families.map((family, index) => ({
       family,
-      target: targets[index % targets.length] || 'local-lab',
+      target: targets[index % targets.length] || "local-lab",
       priority: index + 1,
       pressureQuestion: `What can valid ${family} components be made to do together that no single component advertises?`,
       strangeRouteHypothesis: this.defaultStrangeRouteHypothesis(family),
       specialistArchetypes: this.defaultSpecialistsForFamily(family),
       resourcePackIds: this.resourcePackIdsForFamily(family),
-      containment: 'Start in route preview and local/read-only mode; require target-bound receipts for active execution.',
+      containment:
+        "Start in route preview and local/read-only mode; require target-bound receipts for active execution.",
     }));
   }
 
-  private defaultSpecialistsForFamily(family: MissionFamily): OperatorArchetype[] {
+  private defaultSpecialistsForFamily(
+    family: MissionFamily,
+  ): OperatorArchetype[] {
     const map: Record<MissionFamily, OperatorArchetype[]> = {
-      web_api: ['coordinator', 'recon', 'scanner', 'analyst'],
-      ai_red_team: ['coordinator', 'ghost', 'analyst'],
-      cloud_infra: ['coordinator', 'recon', 'scanner', 'analyst'],
-      smart_contract: ['coordinator', 'analyst', 'scanner'],
-      code_supply_chain: ['coordinator', 'scanner', 'ghost', 'analyst'],
-      crypto_secrets: ['coordinator', 'ghost', 'analyst'],
-      reverse_binary: ['coordinator', 'scanner', 'analyst'],
-      agent_warfare: ['coordinator', 'ghost', 'analyst'],
-      social_osint: ['coordinator', 'recon', 'analyst'],
-      reporting_remediation: ['coordinator', 'analyst'],
+      web_api: ["coordinator", "recon", "scanner", "analyst"],
+      ai_red_team: ["coordinator", "ghost", "analyst"],
+      cloud_infra: ["coordinator", "recon", "scanner", "analyst"],
+      smart_contract: ["coordinator", "analyst", "scanner"],
+      code_audit: ["coordinator", "scanner", "analyst"],
+      code_supply_chain: ["coordinator", "scanner", "ghost", "analyst"],
+      crypto_secrets: ["coordinator", "ghost", "analyst"],
+      reverse_binary: ["coordinator", "scanner", "analyst"],
+      agent_warfare: ["coordinator", "ghost", "analyst"],
+      social_osint: ["coordinator", "recon", "analyst"],
+      reporting_remediation: ["coordinator", "analyst"],
     };
-    return map[family] || ['coordinator', 'analyst'];
+    return map[family] || ["coordinator", "analyst"];
   }
 
   private defaultStrangeRouteHypothesis(family: MissionFamily): string {
     const map: Record<MissionFamily, string> = {
-      web_api: 'A harmless endpoint, cached state, and auth assumption compose into a privilege or data-boundary collapse.',
-      ai_red_team: 'Untrusted context steers a model/tool/memory boundary while each component appears locally compliant.',
-      cloud_infra: 'IAM defaults, metadata, and deployment automation combine into a trust path no owner intended.',
-      smart_contract: 'Intent, signing, and contract state diverge across simulation and execution boundaries.',
-      code_supply_chain: 'Generated code, dependency trust, and CI permissions compress review into an unsafe release path.',
-      crypto_secrets: 'Encoding, token handling, and secret redaction rules disagree about what counts as sensitive.',
-      reverse_binary: 'Parser assumptions and file metadata create a weird machine before classic exploitation begins.',
-      agent_warfare: 'Delegation, tool output, and memory promotion create role confusion across agent handoffs.',
-      social_osint: 'Identity, source reputation, and workflow urgency cause an operator to overtrust context.',
-      reporting_remediation: 'A weak finding gets translated into confident leadership language without replayable evidence.',
+      web_api:
+        "A harmless endpoint, cached state, and auth assumption compose into a privilege or data-boundary collapse.",
+      ai_red_team:
+        "Untrusted context steers a model/tool/memory boundary while each component appears locally compliant.",
+      cloud_infra:
+        "IAM defaults, metadata, and deployment automation combine into a trust path no owner intended.",
+      smart_contract:
+        "Intent, signing, and contract state diverge across simulation and execution boundaries.",
+      code_audit:
+        "Untrusted input crosses an implicit validation or guard assumption and reaches a dangerous source-code sink.",
+      code_supply_chain:
+        "Generated code, dependency trust, and CI permissions compress review into an unsafe release path.",
+      crypto_secrets:
+        "Encoding, token handling, and secret redaction rules disagree about what counts as sensitive.",
+      reverse_binary:
+        "Parser assumptions and file metadata create a weird machine before classic exploitation begins.",
+      agent_warfare:
+        "Delegation, tool output, and memory promotion create role confusion across agent handoffs.",
+      social_osint:
+        "Identity, source reputation, and workflow urgency cause an operator to overtrust context.",
+      reporting_remediation:
+        "A weak finding gets translated into confident leadership language without replayable evidence.",
     };
     return map[family];
   }
 
-  private normalizeAuthorityReceipts(value: unknown, plan: OpPlan): OpPlanAuthorityReceipt[] {
-    const validActions = ['route_preview', 'mission_execution', 'network_request', 'command_execution', 'model_call', 'autonomous_execution', 'human_review'];
-    const fromJson = Array.isArray(value) ? value.map((receipt: any): OpPlanAuthorityReceipt => ({
-      action: validActions.includes(String(receipt?.action)) ? receipt.action : 'human_review',
-      target: String(receipt?.target || '*'),
-      reason: String(receipt?.reason || 'Authority boundary must be explicit before action.'),
-      requiredBefore: String(receipt?.requiredBefore || 'execution'),
-    })) : [];
+  private normalizeAuthorityReceipts(
+    value: unknown,
+    plan: OpPlan,
+  ): OpPlanAuthorityReceipt[] {
+    const validActions = [
+      "route_preview",
+      "mission_execution",
+      "network_request",
+      "command_execution",
+      "model_call",
+      "autonomous_execution",
+      "human_review",
+    ];
+    const fromJson = Array.isArray(value)
+      ? value.map((receipt: any): OpPlanAuthorityReceipt => ({
+          action: validActions.includes(String(receipt?.action))
+            ? receipt.action
+            : "human_review",
+          target: String(receipt?.target || "*"),
+          reason: String(
+            receipt?.reason ||
+              "Authority boundary must be explicit before action.",
+          ),
+          requiredBefore: String(receipt?.requiredBefore || "execution"),
+        }))
+      : [];
 
     const defaults: OpPlanAuthorityReceipt[] = [
       {
-        action: 'route_preview',
-        target: '*',
-        reason: 'Preview the route and scope before operators execute.',
-        requiredBefore: 'plan_review',
+        action: "route_preview",
+        target: "*",
+        reason: "Preview the route and scope before operators execute.",
+        requiredBefore: "plan_review",
       },
-      ...plan.targets.map(target => ({
-        action: 'mission_execution' as const,
+      ...plan.targets.map((target) => ({
+        action: "mission_execution" as const,
         target: target.address,
         reason: `Target-bound execution receipt for ${target.address}.`,
-        requiredBefore: 'active_execution',
+        requiredBefore: "active_execution",
       })),
     ];
 
     const seen = new Set<string>();
-    return [...fromJson, ...defaults].filter(receipt => {
+    return [...fromJson, ...defaults].filter((receipt) => {
       const key = `${receipt.action}:${receipt.target}:${receipt.requiredBefore}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -896,14 +1349,20 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   }
 
   private normalizeEvidenceContract(value: unknown): OpPlanEvidenceContract {
-    const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const input =
+      value && typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : {};
     const fallback = this.defaultEvidenceContract();
-    const floor = ['weak', 'context', 'tool', 'replayable'].includes(String(input.provenanceFloor))
-      ? input.provenanceFloor as OpPlanEvidenceContract['provenanceFloor']
+    const floor = ["weak", "context", "tool", "replayable"].includes(
+      String(input.provenanceFloor),
+    )
+      ? (input.provenanceFloor as OpPlanEvidenceContract["provenanceFloor"])
       : fallback.provenanceFloor;
     const minimumConfidence = Number(input.minimumConfidence);
     return {
-      requiredArtifacts: this.normalizeStringList(input.requiredArtifacts).length
+      requiredArtifacts: this.normalizeStringList(input.requiredArtifacts)
+        .length
         ? this.normalizeStringList(input.requiredArtifacts)
         : fallback.requiredArtifacts,
       minimumConfidence: Number.isFinite(minimumConfidence)
@@ -913,134 +1372,231 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       claimRules: this.normalizeStringList(input.claimRules).length
         ? this.normalizeStringList(input.claimRules)
         : fallback.claimRules,
-      retestRequired: input.retestRequired === undefined ? fallback.retestRequired : Boolean(input.retestRequired),
+      retestRequired:
+        input.retestRequired === undefined
+          ? fallback.retestRequired
+          : Boolean(input.retestRequired),
     };
   }
 
   private normalizeWorkOrders(value: unknown, plan: OpPlan): OpPlanWorkOrder[] {
     if (Array.isArray(value) && value.length) {
-      return value.map((order: any, index: number) => this.normalizeWorkOrder(order, plan, index));
+      return value.map((order: any, index: number) =>
+        this.normalizeWorkOrder(order, plan, index),
+      );
     }
 
-    const targets = plan.targets.length ? plan.targets.map(target => target.address) : ['local-lab'];
+    const targets = plan.targets.length
+      ? plan.targets.map((target) => target.address)
+      : ["local-lab"];
     const orders: OpPlanWorkOrder[] = [];
     for (const lane of plan.huntLanes) {
-      const target = lane.target || targets[orders.length % targets.length] || 'local-lab';
-      orders.push(this.normalizeWorkOrder({
-        family: lane.family,
-        title: `${lane.family} strange-route proof`,
-        hypothesis: lane.strangeRouteHypothesis,
-        suspectedBoundary: lane.pressureQuestion,
-        target,
-        assignedArchetype: lane.specialistArchetypes[0] || 'analyst',
-        kind: 'prove',
-        safeProbe: `Build a scoped, non-destructive probe for ${target} that tests the lane hypothesis without state change.`,
-        expectedSignal: 'A replayable artifact shows the boundary holds, bends, or breaks.',
-        evidenceArtifact: 'route preview, transcript, tool output, screenshot, or local fixture result',
-        falsifier: 'No boundary confusion appears after two independent probes and one disproof attempt.',
-        retest: 'Repeat the same probe after hardening or with a clean fixture.',
-        requiresReceipt: target !== 'local-lab',
-        toolHints: this.toolIdsForFamily(lane.family),
-        priority: lane.priority,
-      }, plan, orders.length));
-      orders.push(this.normalizeWorkOrder({
-        family: lane.family,
-        title: `${lane.family} disproof pass`,
-        hypothesis: `The ${lane.family} route is a false lead or low-value path.`,
-        suspectedBoundary: 'Evidence confidence and falsifiability',
-        target,
-        assignedArchetype: 'analyst',
-        kind: 'disprove',
-        safeProbe: 'Try to falsify the strongest claim using read-only evidence and a contrast case.',
-        expectedSignal: 'Either the claim weakens, or the route earns higher confidence.',
-        evidenceArtifact: 'falsifier note linked to evidence IDs',
-        falsifier: 'A second operator cannot reproduce the claimed signal.',
-        retest: 'Re-run the disproof after any tool, prompt, or fixture change.',
-        requiresReceipt: false,
-        toolHints: ['manual-review'],
-        priority: lane.priority + 1,
-      }, plan, orders.length));
+      const target =
+        lane.target || targets[orders.length % targets.length] || "local-lab";
+      orders.push(
+        this.normalizeWorkOrder(
+          {
+            family: lane.family,
+            title: `${lane.family} strange-route proof`,
+            hypothesis: lane.strangeRouteHypothesis,
+            suspectedBoundary: lane.pressureQuestion,
+            target,
+            assignedArchetype: lane.specialistArchetypes[0] || "analyst",
+            kind: "prove",
+            safeProbe: `Build a scoped, non-destructive probe for ${target} that tests the lane hypothesis without state change.`,
+            expectedSignal:
+              "A replayable artifact shows the boundary holds, bends, or breaks.",
+            evidenceArtifact:
+              "route preview, transcript, tool output, screenshot, or local fixture result",
+            falsifier:
+              "No boundary confusion appears after two independent probes and one disproof attempt.",
+            retest:
+              "Repeat the same probe after hardening or with a clean fixture.",
+            requiresReceipt: target !== "local-lab",
+            toolHints: this.toolIdsForFamily(lane.family),
+            priority: lane.priority,
+          },
+          plan,
+          orders.length,
+        ),
+      );
+      orders.push(
+        this.normalizeWorkOrder(
+          {
+            family: lane.family,
+            title: `${lane.family} disproof pass`,
+            hypothesis: `The ${lane.family} route is a false lead or low-value path.`,
+            suspectedBoundary: "Evidence confidence and falsifiability",
+            target,
+            assignedArchetype: "analyst",
+            kind: "disprove",
+            safeProbe:
+              "Try to falsify the strongest claim using read-only evidence and a contrast case.",
+            expectedSignal:
+              "Either the claim weakens, or the route earns higher confidence.",
+            evidenceArtifact: "falsifier note linked to evidence IDs",
+            falsifier: "A second operator cannot reproduce the claimed signal.",
+            retest:
+              "Re-run the disproof after any tool, prompt, or fixture change.",
+            requiresReceipt: false,
+            toolHints: ["manual-review"],
+            priority: lane.priority + 1,
+          },
+          plan,
+          orders.length,
+        ),
+      );
     }
     return orders.slice(0, 12);
   }
 
-  private normalizeWorkOrder(order: any, plan: OpPlan, index: number): OpPlanWorkOrder {
-    const family = this.normalizeMissionFamily(order?.family, plan.missionFamily) || 'web_api';
-    const target = String(order?.target || plan.targets[0]?.address || 'local-lab');
-    const kind = ['prove', 'disprove', 'map_impact', 'owner_control', 'retest_design', 'tool_probe'].includes(String(order?.kind))
-      ? order.kind as OpPlanWorkOrder['kind']
-      : 'prove';
-    const requiresReceipt = order?.requiresReceipt === undefined
-      ? target !== 'local-lab' && kind !== 'disprove'
-      : Boolean(order.requiresReceipt);
+  private normalizeWorkOrder(
+    order: any,
+    plan: OpPlan,
+    index: number,
+  ): OpPlanWorkOrder {
+    const family =
+      this.normalizeMissionFamily(order?.family, plan.missionFamily) ||
+      "web_api";
+    const target = String(
+      order?.target || plan.targets[0]?.address || "local-lab",
+    );
+    const kind = [
+      "prove",
+      "disprove",
+      "map_impact",
+      "owner_control",
+      "retest_design",
+      "tool_probe",
+    ].includes(String(order?.kind))
+      ? (order.kind as OpPlanWorkOrder["kind"])
+      : "prove";
+    const requiresReceipt =
+      order?.requiresReceipt === undefined
+        ? target !== "local-lab" && kind !== "disprove"
+        : Boolean(order.requiresReceipt);
     return {
-      id: typeof order?.id === 'string' && order.id.trim() ? order.id : `wo_${randomUUID().slice(0, 8)}`,
+      id:
+        typeof order?.id === "string" && order.id.trim()
+          ? order.id
+          : `wo_${randomUUID().slice(0, 8)}`,
       family,
       title: String(order?.title || `${family} work order ${index + 1}`),
-      hypothesis: String(order?.hypothesis || 'Boundary behavior requires explicit testing.'),
-      suspectedBoundary: String(order?.suspectedBoundary || 'Unspecified system boundary'),
+      hypothesis: String(
+        order?.hypothesis || "Boundary behavior requires explicit testing.",
+      ),
+      suspectedBoundary: String(
+        order?.suspectedBoundary || "Unspecified system boundary",
+      ),
       target,
-      assignedArchetype: this.normalizeOperatorArchetype(order?.assignedArchetype, 'analyst'),
+      assignedArchetype: this.normalizeOperatorArchetype(
+        order?.assignedArchetype,
+        "analyst",
+      ),
       kind,
-      safeProbe: String(order?.safeProbe || 'Use a scoped read-only probe or local fixture before active testing.'),
-      expectedSignal: String(order?.expectedSignal || 'Evidence clarifies whether the hypothesis holds.'),
-      evidenceArtifact: String(order?.evidenceArtifact || 'operator transcript or tool output'),
-      falsifier: String(order?.falsifier || 'A second probe cannot reproduce the signal.'),
-      retest: String(order?.retest || 'Queue a retest after remediation or route change.'),
+      safeProbe: String(
+        order?.safeProbe ||
+          "Use a scoped read-only probe or local fixture before active testing.",
+      ),
+      expectedSignal: String(
+        order?.expectedSignal ||
+          "Evidence clarifies whether the hypothesis holds.",
+      ),
+      evidenceArtifact: String(
+        order?.evidenceArtifact || "operator transcript or tool output",
+      ),
+      falsifier: String(
+        order?.falsifier || "A second probe cannot reproduce the signal.",
+      ),
+      retest: String(
+        order?.retest || "Queue a retest after remediation or route change.",
+      ),
       requiresReceipt,
       toolHints: this.normalizeStringList(order?.toolHints).length
         ? this.normalizeStringList(order.toolHints)
         : this.toolIdsForFamily(family),
       priority: this.boundedPriority(order?.priority, index + 1),
-      status: requiresReceipt ? 'needs_receipt' : 'ready',
+      status: requiresReceipt ? "needs_receipt" : "ready",
     };
   }
 
-  private normalizeToolPlan(value: unknown, families: MissionFamily[]): OpPlanToolPlan[] {
+  private normalizeToolPlan(
+    value: unknown,
+    families: MissionFamily[],
+  ): OpPlanToolPlan[] {
     if (Array.isArray(value) && value.length) {
       return value.map((item: any, index: number) => {
-        const family = this.normalizeMissionFamily(item?.family, families[index % families.length] || 'web_api') || 'web_api';
+        const family =
+          this.normalizeMissionFamily(
+            item?.family,
+            families[index % families.length] || "web_api",
+          ) || "web_api";
         const primaryTools = this.normalizeStringList(item?.primaryTools);
         const fallbackTools = this.normalizeStringList(item?.fallbackTools);
         return {
           family,
-          primaryTools: primaryTools.length ? primaryTools : this.toolIdsForFamily(family).slice(0, 4),
-          fallbackTools: fallbackTools.length ? fallbackTools : ['manual-review', 'local-fixture', 'route-preview'],
+          primaryTools: primaryTools.length
+            ? primaryTools
+            : this.toolIdsForFamily(family).slice(0, 4),
+          fallbackTools: fallbackTools.length
+            ? fallbackTools
+            : ["manual-review", "local-fixture", "route-preview"],
           readinessNotes: this.normalizeStringList(item?.readinessNotes).length
             ? this.normalizeStringList(item.readinessNotes)
-            : ['Prefer safe_command tools first; receipt_required tools need target-bound approval.'],
+            : [
+                "Prefer safe_command tools first; receipt_required tools need target-bound approval.",
+              ],
         };
       });
     }
 
-    return families.map(family => ({
+    return families.map((family) => ({
       family,
       primaryTools: this.toolIdsForFamily(family).slice(0, 4),
-      fallbackTools: ['manual-review', 'local-fixture', 'route-preview'],
-      readinessNotes: ['Use catalog-only tools as planning context until an adapter is command-ready.'],
+      fallbackTools: ["manual-review", "local-fixture", "route-preview"],
+      readinessNotes: [
+        "Use catalog-only tools as planning context until an adapter is command-ready.",
+      ],
     }));
   }
 
   private normalizeCritique(value: unknown, plan: OpPlan): OpPlanCritique {
-    const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const input =
+      value && typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : {};
     const fallback = this.defaultCritique();
     return {
-      strongestAssumption: String(input.strongestAssumption || fallback.strongestAssumption),
+      strongestAssumption: String(
+        input.strongestAssumption || fallback.strongestAssumption,
+      ),
       missingCoverage: this.normalizeStringList(input.missingCoverage),
-      weirdRoute: String(input.weirdRoute || plan.huntLanes[0]?.strangeRouteHypothesis || fallback.weirdRoute),
+      weirdRoute: String(
+        input.weirdRoute ||
+          plan.huntLanes[0]?.strangeRouteHypothesis ||
+          fallback.weirdRoute,
+      ),
       proofPressure: String(input.proofPressure || fallback.proofPressure),
       nextQuestion: String(input.nextQuestion || fallback.nextQuestion),
     };
   }
 
-  private normalizeLearningDirective(value: unknown, families: MissionFamily[]): OpPlanLearningDirective {
-    const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  private normalizeLearningDirective(
+    value: unknown,
+    families: MissionFamily[],
+  ): OpPlanLearningDirective {
+    const input =
+      value && typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : {};
     const fallback = this.defaultLearningDirective();
     return {
       memoryCandidates: this.normalizeStringList(input.memoryCandidates),
       doctrineNotes: this.normalizeStringList(input.doctrineNotes).length
         ? this.normalizeStringList(input.doctrineNotes)
-        : [`Watch for reusable ${families.join('+')} weird-machine patterns after evidence review.`],
+        : [
+            `Watch for reusable ${families.join("+")} weird-machine patterns after evidence review.`,
+          ],
       replaySuites: this.normalizeStringList(input.replaySuites).length
         ? this.normalizeStringList(input.replaySuites)
         : fallback.replaySuites,
@@ -1051,33 +1607,52 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
    * Extract target addresses from directive text using heuristics
    */
   private extractTargetsFromDirective(directive: Directive): OpPlanTarget[] {
-    const text = `${directive.objective} ${directive.scopeHints || ''} ${directive.constraints || ''}`;
+    const text = `${directive.objective} ${directive.scopeHints || ""} ${directive.constraints || ""}`;
     const targets: OpPlanTarget[] = [];
 
     // Match URLs
     const urlMatches = text.match(/https?:\/\/[^\s,;)]+/gi);
     if (urlMatches) {
       for (const url of urlMatches) {
-        targets.push({ address: url.replace(/[.,;)]+$/, ''), expectedType: 'web_application', priority: targets.length + 1, rationale: 'Extracted from directive' });
+        targets.push({
+          address: url.replace(/[.,;)]+$/, ""),
+          expectedType: "web_application",
+          priority: targets.length + 1,
+          rationale: "Extracted from directive",
+        });
       }
     }
 
     // Match IP addresses
-    const ipMatches = text.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?\b/g);
+    const ipMatches = text.match(
+      /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?\b/g,
+    );
     if (ipMatches) {
       for (const ip of ipMatches) {
-        if (!targets.some(t => t.address === ip)) {
-          targets.push({ address: ip, expectedType: 'host', priority: targets.length + 1, rationale: 'Extracted from directive' });
+        if (!targets.some((t) => t.address === ip)) {
+          targets.push({
+            address: ip,
+            expectedType: "host",
+            priority: targets.length + 1,
+            rationale: "Extracted from directive",
+          });
         }
       }
     }
 
     // Match domain names (basic heuristic)
-    const domainMatches = text.match(/\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|org|net|io|dev|app|co|me|info|biz|gov|edu|mil|int)\b/gi);
+    const domainMatches = text.match(
+      /\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|org|net|io|dev|app|co|me|info|biz|gov|edu|mil|int)\b/gi,
+    );
     if (domainMatches) {
       for (const domain of domainMatches) {
-        if (!targets.some(t => t.address.includes(domain))) {
-          targets.push({ address: domain, expectedType: 'web_application', priority: targets.length + 1, rationale: 'Extracted from directive' });
+        if (!targets.some((t) => t.address.includes(domain))) {
+          targets.push({
+            address: domain,
+            expectedType: "web_application",
+            priority: targets.length + 1,
+            rationale: "Extracted from directive",
+          });
         }
       }
     }
@@ -1097,7 +1672,7 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   reviewPlan(plan?: OpPlan): GeneralPlanReview {
     const p = plan || this.currentPlan;
     if (!p) {
-      throw new Error('No plan available. Call planOperation() first.');
+      throw new Error("No plan available. Call planOperation() first.");
     }
 
     const blockers: string[] = [];
@@ -1106,106 +1681,146 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     let score = 100;
 
     if (!p.targets.length) {
-      blockers.push('No explicit target was extracted or supplied.');
+      blockers.push("No explicit target was extracted or supplied.");
       score -= 25;
     } else {
       strengths.push(`${p.targets.length} target(s) are explicit.`);
     }
 
     if (!p.roe.scope.length) {
-      blockers.push('Rules of engagement do not name an in-scope boundary.');
+      blockers.push("Rules of engagement do not name an in-scope boundary.");
       score -= 20;
     } else {
-      strengths.push('Rules of engagement include target-bound scope.');
+      strengths.push("Rules of engagement include target-bound scope.");
     }
 
     if (p.roe.destructiveAllowed) {
-      blockers.push('Destructive techniques are enabled; require a dedicated human receipt before execution.');
+      blockers.push(
+        "Destructive techniques are enabled; require a dedicated human receipt before execution.",
+      );
       score -= 30;
     }
 
     if (!p.huntLanes.length) {
-      blockers.push('No hunt lanes were generated for specialist decomposition.');
+      blockers.push(
+        "No hunt lanes were generated for specialist decomposition.",
+      );
       score -= 20;
     } else {
-      strengths.push(`${p.huntLanes.length} hunt lane(s) are ready for decomposition.`);
+      strengths.push(
+        `${p.huntLanes.length} hunt lane(s) are ready for decomposition.`,
+      );
     }
 
     if (!p.workOrders.length) {
-      blockers.push('No specialist work orders exist.');
+      blockers.push("No specialist work orders exist.");
       score -= 20;
     } else {
-      strengths.push(`${p.workOrders.length} work order(s) define probes, evidence, falsifiers, and retests.`);
+      strengths.push(
+        `${p.workOrders.length} work order(s) define probes, evidence, falsifiers, and retests.`,
+      );
     }
 
-    const workOrdersWithoutRetests = p.workOrders.filter(order => !order.retest.trim());
+    const workOrdersWithoutRetests = p.workOrders.filter(
+      (order) => !order.retest.trim(),
+    );
     if (workOrdersWithoutRetests.length) {
-      warnings.push(`${workOrdersWithoutRetests.length} work order(s) are missing retest instructions.`);
+      warnings.push(
+        `${workOrdersWithoutRetests.length} work order(s) are missing retest instructions.`,
+      );
       score -= 8;
     }
 
-    const workOrdersWithoutFalsifiers = p.workOrders.filter(order => !order.falsifier.trim());
+    const workOrdersWithoutFalsifiers = p.workOrders.filter(
+      (order) => !order.falsifier.trim(),
+    );
     if (workOrdersWithoutFalsifiers.length) {
-      warnings.push(`${workOrdersWithoutFalsifiers.length} work order(s) are missing falsifiers.`);
+      warnings.push(
+        `${workOrdersWithoutFalsifiers.length} work order(s) are missing falsifiers.`,
+      );
       score -= 8;
     }
 
     if (!p.evidenceContract.requiredArtifacts.length) {
-      blockers.push('Evidence contract has no required artifacts.');
+      blockers.push("Evidence contract has no required artifacts.");
       score -= 20;
     } else {
-      strengths.push('Evidence contract names required artifacts.');
+      strengths.push("Evidence contract names required artifacts.");
     }
 
     if (!p.evidenceContract.retestRequired) {
-      warnings.push('Evidence contract does not require retests.');
+      warnings.push("Evidence contract does not require retests.");
       score -= 10;
     }
 
     if (p.evidenceContract.minimumConfidence < 60) {
-      warnings.push('Minimum confidence is low for a General-controlled campaign.');
+      warnings.push(
+        "Minimum confidence is low for a General-controlled campaign.",
+      );
       score -= 8;
     }
 
-    const requiredReceipts = p.authorityReceipts.filter(receipt =>
-      receipt.action !== 'route_preview' || receipt.target !== '*'
+    const requiredReceipts = p.authorityReceipts.filter(
+      (receipt) => receipt.action !== "route_preview" || receipt.target !== "*",
     );
-    const missionReceipts = p.authorityReceipts.filter(receipt => receipt.action === 'mission_execution');
-    const activeTargets = new Set(p.targets.map(target => target.address).filter(Boolean));
-    const coveredTargets = new Set(missionReceipts.map(receipt => receipt.target));
-    const uncoveredTargets = [...activeTargets].filter(target => !coveredTargets.has(target));
+    const missionReceipts = p.authorityReceipts.filter(
+      (receipt) => receipt.action === "mission_execution",
+    );
+    const activeTargets = new Set(
+      p.targets.map((target) => target.address).filter(Boolean),
+    );
+    const coveredTargets = new Set(
+      missionReceipts.map((receipt) => receipt.target),
+    );
+    const uncoveredTargets = [...activeTargets].filter(
+      (target) => !coveredTargets.has(target),
+    );
     if (uncoveredTargets.length) {
-      warnings.push(`Missing mission_execution receipt requirement for: ${uncoveredTargets.join(', ')}`);
+      warnings.push(
+        `Missing mission_execution receipt requirement for: ${uncoveredTargets.join(", ")}`,
+      );
       score -= 10;
     }
 
     const coverage: Partial<Record<MissionFamily, number>> = {};
-    for (const lane of p.huntLanes) coverage[lane.family] = (coverage[lane.family] || 0) + 1;
-    const workOrderFamilies = new Set(p.workOrders.map(order => order.family));
-    const lanesWithoutWorkOrders = p.huntLanes.filter(lane => !workOrderFamilies.has(lane.family));
+    for (const lane of p.huntLanes)
+      coverage[lane.family] = (coverage[lane.family] || 0) + 1;
+    const workOrderFamilies = new Set(
+      p.workOrders.map((order) => order.family),
+    );
+    const lanesWithoutWorkOrders = p.huntLanes.filter(
+      (lane) => !workOrderFamilies.has(lane.family),
+    );
     if (lanesWithoutWorkOrders.length) {
-      warnings.push(`Hunt lane(s) without work orders: ${lanesWithoutWorkOrders.map(lane => lane.family).join(', ')}`);
+      warnings.push(
+        `Hunt lane(s) without work orders: ${lanesWithoutWorkOrders.map((lane) => lane.family).join(", ")}`,
+      );
       score -= 12;
     }
 
     if (!p.critic.weirdRoute.trim() || !p.critic.proofPressure.trim()) {
-      warnings.push('General critique is too thin; add weird-route and proof-pressure analysis.');
+      warnings.push(
+        "General critique is too thin; add weird-route and proof-pressure analysis.",
+      );
       score -= 10;
     } else {
-      strengths.push('General critique includes weird-route and proof-pressure checks.');
+      strengths.push(
+        "General critique includes weird-route and proof-pressure checks.",
+      );
     }
 
     if (!p.toolPlan.length) {
-      warnings.push('No tool plan or fallback route was recorded.');
+      warnings.push("No tool plan or fallback route was recorded.");
       score -= 8;
     }
 
     const clampedScore = Math.max(0, Math.min(100, score));
-    const status: GeneralPlanReview['status'] = blockers.length || clampedScore < 70
-      ? 'hold'
-      : warnings.length || clampedScore < 90
-        ? 'degraded'
-        : 'ready';
+    const status: GeneralPlanReview["status"] =
+      blockers.length || clampedScore < 70
+        ? "hold"
+        : warnings.length || clampedScore < 90
+          ? "degraded"
+          : "ready";
 
     return {
       status,
@@ -1215,34 +1830,39 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       strengths,
       requiredReceipts,
       coverage,
-      recommendedNextActions: this.recommendedNextActions(status, blockers, warnings, p),
+      recommendedNextActions: this.recommendedNextActions(
+        status,
+        blockers,
+        warnings,
+        p,
+      ),
     };
   }
 
   private recommendedNextActions(
-    status: GeneralPlanReview['status'],
+    status: GeneralPlanReview["status"],
     blockers: string[],
     warnings: string[],
-    plan: OpPlan
+    plan: OpPlan,
   ): string[] {
-    if (status === 'hold') {
+    if (status === "hold") {
       return [
-        ...blockers.map(blocker => `Resolve blocker: ${blocker}`),
-        'Run route preview and request target-bound receipts before active execution.',
-        'Ask WOLF to verify stale state, open work orders, and weak evidence before launch.',
+        ...blockers.map((blocker) => `Resolve blocker: ${blocker}`),
+        "Run route preview and request target-bound receipts before active execution.",
+        "Ask WOLF to verify stale state, open work orders, and weak evidence before launch.",
       ];
     }
     if (warnings.length) {
       return [
-        ...warnings.slice(0, 3).map(warning => `Tighten warning: ${warning}`),
-        'Launch only the ready/read-only work orders while receipt-gated tasks wait.',
+        ...warnings.slice(0, 3).map((warning) => `Tighten warning: ${warning}`),
+        "Launch only the ready/read-only work orders while receipt-gated tasks wait.",
         `Keep focus on ${plan.missionFamily} while preserving cross-lane evidence links.`,
       ];
     }
     return [
-      'Proceed through route preview into receipt-gated execution.',
-      'Pulse Watch Loop after hypothesis generation and after first evidence artifact.',
-      'Queue WOLF review before promoting findings to READY.',
+      "Proceed through route preview into receipt-gated execution.",
+      "Pulse Watch Loop after hypothesis generation and after first evidence artifact.",
+      "Queue WOLF review before promoting findings to READY.",
     ];
   }
 
@@ -1268,16 +1888,16 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   } {
     const p = plan || this.currentPlan;
     if (!p) {
-      throw new Error('No plan available. Call planOperation() first.');
+      throw new Error("No plan available. Call planOperation() first.");
     }
 
-    this.emit('general:executing', { plan: p });
+    this.emit("general:executing", { plan: p });
 
     // Build execution config from the plan
     const targetAddresses = p.targets
       .sort((a, b) => a.priority - b.priority)
-      .map(t => t.address)
-      .filter(addr => addr.length > 0);
+      .map((t) => t.address)
+      .filter((addr) => addr.length > 0);
 
     const review = this.reviewPlan(p);
 
@@ -1294,10 +1914,12 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
         operators.push(op.archetype);
         operatorAssignments.push({
           archetype: op.archetype,
-          lane: p.huntLanes.find(lane => lane.specialistArchetypes.includes(op.archetype))?.family,
+          lane: p.huntLanes.find((lane) =>
+            lane.specialistArchetypes.includes(op.archetype),
+          )?.family,
           workOrderIds: p.workOrders
-            .filter(order => order.assignedArchetype === op.archetype)
-            .map(order => order.id),
+            .filter((order) => order.assignedArchetype === op.archetype)
+            .map((order) => order.id),
           briefing: op.briefing,
         });
       }
@@ -1306,13 +1928,23 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     for (const lane of p.huntLanes) {
       for (const archetype of lane.specialistArchetypes) {
         if (!operators.includes(archetype)) operators.push(archetype);
-        if (!operatorAssignments.some(assignment => assignment.archetype === archetype && assignment.lane === lane.family)) {
+        if (
+          !operatorAssignments.some(
+            (assignment) =>
+              assignment.archetype === archetype &&
+              assignment.lane === lane.family,
+          )
+        ) {
           operatorAssignments.push({
             archetype,
             lane: lane.family,
             workOrderIds: p.workOrders
-              .filter(order => order.family === lane.family && order.assignedArchetype === archetype)
-              .map(order => order.id),
+              .filter(
+                (order) =>
+                  order.family === lane.family &&
+                  order.assignedArchetype === archetype,
+              )
+              .map((order) => order.id),
             briefing: `${lane.family}: ${lane.pressureQuestion}`,
           });
         }
@@ -1325,7 +1957,7 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       operators,
       operatorAssignments,
       opsecLevel: p.opsecLevel,
-      objectives: p.objectives.map(o => o.description),
+      objectives: p.objectives.map((o) => o.description),
       workOrders: p.workOrders,
       missionGate: p.missionGate,
       review,
@@ -1345,7 +1977,7 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     this.monitoringActive = true;
 
     // Listen for findings to buffer them for sitreps
-    command.on('finding:discovered', ({ finding }) => {
+    command.on("finding:discovered", ({ finding }) => {
       this.findingsBuffer.push(finding);
 
       // If we hit the trigger threshold, produce an early sitrep
@@ -1379,33 +2011,41 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     const status = command.getStatus();
     const findings = command.vault.getAllFindings();
     const mission = command.mission.getActiveMission();
-    const operators = command.cell.getAllOperators().map(op => op.getSummary());
+    const operators = command.cell
+      .getAllOperators()
+      .map((op) => op.getSummary());
 
     const situationData = {
-      plan: this.currentPlan ? {
-        codename: this.currentPlan.codename,
-        missionFamily: this.currentPlan.missionFamily,
-        objectives: this.currentPlan.objectives.map(o => o.description),
-        opsecLevel: this.currentPlan.opsecLevel,
-        gate: this.currentPlan.missionGate,
-        huntLanes: this.currentPlan.huntLanes.map(lane => ({
-          family: lane.family,
-          target: lane.target,
-          priority: lane.priority,
-          pressureQuestion: lane.pressureQuestion,
-        })),
-        workOrders: {
-          total: this.currentPlan.workOrders.length,
-          needsReceipt: this.currentPlan.workOrders.filter(order => order.status === 'needs_receipt').length,
-          ready: this.currentPlan.workOrders.filter(order => order.status === 'ready').length,
-        },
-      } : null,
+      plan: this.currentPlan
+        ? {
+            codename: this.currentPlan.codename,
+            missionFamily: this.currentPlan.missionFamily,
+            objectives: this.currentPlan.objectives.map((o) => o.description),
+            opsecLevel: this.currentPlan.opsecLevel,
+            gate: this.currentPlan.missionGate,
+            huntLanes: this.currentPlan.huntLanes.map((lane) => ({
+              family: lane.family,
+              target: lane.target,
+              priority: lane.priority,
+              pressureQuestion: lane.pressureQuestion,
+            })),
+            workOrders: {
+              total: this.currentPlan.workOrders.length,
+              needsReceipt: this.currentPlan.workOrders.filter(
+                (order) => order.status === "needs_receipt",
+              ).length,
+              ready: this.currentPlan.workOrders.filter(
+                (order) => order.status === "ready",
+              ).length,
+            },
+          }
+        : null,
       missionStatus: {
-        phase: mission?.currentPhase || 'unknown',
+        phase: mission?.currentPhase || "unknown",
         progress: mission?.progress || 0,
         running: status.running,
       },
-      operators: operators.map(op => ({
+      operators: operators.map((op) => ({
         callsign: op.callsign,
         archetype: op.archetype,
         status: op.status,
@@ -1413,9 +2053,10 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
         findings: op.findings,
       })),
       findingsCount: findings.length,
-      criticalFindings: findings.filter(f => f.severity === 'critical').length,
-      highFindings: findings.filter(f => f.severity === 'high').length,
-      recentFindings: findings.slice(-5).map(f => ({
+      criticalFindings: findings.filter((f) => f.severity === "critical")
+        .length,
+      highFindings: findings.filter((f) => f.severity === "high").length,
+      recentFindings: findings.slice(-5).map((f) => ({
         title: f.title,
         severity: f.severity,
         phase: f.phase,
@@ -1428,15 +2069,15 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       const response = await this.llm.prompt(
         `## SITUATION REPORT REQUEST\n\nCurrent operation state:\n\`\`\`json\n${JSON.stringify(situationData, null, 2)}\n\`\`\`\n\nProduce a brief SITREP as JSON with this schema:\n\`\`\`\n{"assessment":"string","findingsSummary":"string","needsAdaptation":boolean,"adaptation":"string or null","confidence":number_0_to_100,"nextActions":["string"]}\n\`\`\`\n\nRespond with ONLY valid JSON in a code block.`,
         GENERAL_REPLAN_PROMPT,
-        { maxTokens: 2048, temperature: 0.3 }
+        { maxTokens: 2048, temperature: 0.3 },
       );
 
       const sitrep = this.parseSitrepResponse(response);
       this.sitreps.push(sitrep);
-      this.emit('general:sitrep', sitrep);
+      this.emit("general:sitrep", sitrep);
 
       if (sitrep.needsAdaptation && sitrep.adaptation) {
-        this.emit('general:adapting', {
+        this.emit("general:adapting", {
           reason: sitrep.assessment,
           adaptation: sitrep.adaptation,
         });
@@ -1447,13 +2088,13 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       const fallback: GeneralSitrep = {
         timestamp: Date.now(),
         assessment: `Operation in progress. ${findings.length} findings discovered.`,
-        findingsSummary: `Critical: ${findings.filter(f => f.severity === 'critical').length}, High: ${findings.filter(f => f.severity === 'high').length}`,
+        findingsSummary: `Critical: ${findings.filter((f) => f.severity === "critical").length}, High: ${findings.filter((f) => f.severity === "high").length}`,
         needsAdaptation: false,
         confidence: 50,
-        nextActions: ['Continue current phase'],
+        nextActions: ["Continue current phase"],
       };
       this.sitreps.push(fallback);
-      this.emit('general:sitrep', fallback);
+      this.emit("general:sitrep", fallback);
       return fallback;
     }
   }
@@ -1462,19 +2103,27 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     let json: any = null;
     const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (codeBlockMatch) {
-      try { json = JSON.parse(codeBlockMatch[1].trim()); } catch { /* */ }
+      try {
+        json = JSON.parse(codeBlockMatch[1].trim());
+      } catch {
+        /* */
+      }
     }
     if (!json) {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        try { json = JSON.parse(jsonMatch[0]); } catch { /* */ }
+        try {
+          json = JSON.parse(jsonMatch[0]);
+        } catch {
+          /* */
+        }
       }
     }
 
     return {
       timestamp: Date.now(),
       assessment: json?.assessment || response.substring(0, 200),
-      findingsSummary: json?.findingsSummary || '',
+      findingsSummary: json?.findingsSummary || "",
       needsAdaptation: json?.needsAdaptation || false,
       adaptation: json?.adaptation || undefined,
       confidence: json?.confidence || 50,
@@ -1489,7 +2138,9 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
   /**
    * Produce a final strategic assessment of the operation
    */
-  async produceAssessment(command: TempestCommand): Promise<StrategicAssessment> {
+  async produceAssessment(
+    command: TempestCommand,
+  ): Promise<StrategicAssessment> {
     this.stopMonitoring();
 
     const findings = command.vault.getAllFindings();
@@ -1499,7 +2150,7 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
 
     const operationData = {
       plan: this.currentPlan,
-      findings: findings.map(f => ({
+      findings: findings.map((f) => ({
         title: f.title,
         severity: f.severity,
         description: f.description.substring(0, 300),
@@ -1508,13 +2159,13 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
         cve: f.cve,
       })),
       credentialsFound: credentials.length,
-      targets: targets.map(t => ({
+      targets: targets.map((t) => ({
         address: t.address,
         status: t.status,
         services: t.services?.length || 0,
         vulnerabilities: t.vulnerabilities?.length || 0,
       })),
-      missionStatus: mission?.status || 'unknown',
+      missionStatus: mission?.status || "unknown",
       sitreps: this.sitreps.slice(-5),
     };
 
@@ -1522,12 +2173,12 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       const response = await this.llm.prompt(
         `## FINAL STRATEGIC ASSESSMENT REQUEST\n\nComplete operation data:\n\`\`\`json\n${JSON.stringify(operationData, null, 2)}\n\`\`\`\n\nProduce the final strategic assessment as JSON:\n\`\`\`\n{"overallRisk":"critical|high|medium|low|info","executiveSummary":"string","keyFindings":["string"],"attackPaths":["string"],"recommendations":["string"],"lessonsLearned":["string"],"confidence":number_0_to_100}\n\`\`\`\n\nRespond with ONLY valid JSON in a code block.`,
         GENERAL_REPLAN_PROMPT,
-        { maxTokens: 4096, temperature: 0.3 }
+        { maxTokens: 4096, temperature: 0.3 },
       );
 
       const assessment = this.parseAssessmentResponse(response);
-      this.emit('general:assessment', assessment);
-      this.emit('general:complete', {
+      this.emit("general:assessment", assessment);
+      this.emit("general:complete", {
         plan: this.currentPlan!,
         assessment,
       });
@@ -1535,17 +2186,25 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
       return assessment;
     } catch {
       const fallback: StrategicAssessment = {
-        codename: this.currentPlan?.codename || 'UNKNOWN',
-        overallRisk: findings.some(f => f.severity === 'critical') ? 'critical' :
-                     findings.some(f => f.severity === 'high') ? 'high' : 'medium',
+        codename: this.currentPlan?.codename || "UNKNOWN",
+        overallRisk: findings.some((f) => f.severity === "critical")
+          ? "critical"
+          : findings.some((f) => f.severity === "high")
+            ? "high"
+            : "medium",
         executiveSummary: `Operation discovered ${findings.length} findings across ${targets.length} targets.`,
-        keyFindings: findings.filter(f => f.severity === 'critical' || f.severity === 'high').map(f => f.title),
+        keyFindings: findings
+          .filter((f) => f.severity === "critical" || f.severity === "high")
+          .map((f) => f.title),
         attackPaths: [],
-        recommendations: ['Review all critical and high severity findings', 'Prioritize remediation by CVSS score'],
+        recommendations: [
+          "Review all critical and high severity findings",
+          "Prioritize remediation by CVSS score",
+        ],
         lessonsLearned: [],
         confidence: 40,
       };
-      this.emit('general:assessment', fallback);
+      this.emit("general:assessment", fallback);
       return fallback;
     }
   }
@@ -1554,25 +2213,117 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     let json: any = null;
     const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (codeBlockMatch) {
-      try { json = JSON.parse(codeBlockMatch[1].trim()); } catch { /* */ }
+      try {
+        json = JSON.parse(codeBlockMatch[1].trim());
+      } catch {
+        /* */
+      }
     }
     if (!json) {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        try { json = JSON.parse(jsonMatch[0]); } catch { /* */ }
+        try {
+          json = JSON.parse(jsonMatch[0]);
+        } catch {
+          /* */
+        }
       }
     }
 
     return {
-      codename: this.currentPlan?.codename || 'UNKNOWN',
-      overallRisk: json?.overallRisk || 'medium',
-      executiveSummary: json?.executiveSummary || '',
+      codename: this.currentPlan?.codename || "UNKNOWN",
+      overallRisk: json?.overallRisk || "medium",
+      executiveSummary: json?.executiveSummary || "",
       keyFindings: Array.isArray(json?.keyFindings) ? json.keyFindings : [],
       attackPaths: Array.isArray(json?.attackPaths) ? json.attackPaths : [],
-      recommendations: Array.isArray(json?.recommendations) ? json.recommendations : [],
-      lessonsLearned: Array.isArray(json?.lessonsLearned) ? json.lessonsLearned : [],
+      recommendations: Array.isArray(json?.recommendations)
+        ? json.recommendations
+        : [],
+      lessonsLearned: Array.isArray(json?.lessonsLearned)
+        ? json.lessonsLearned
+        : [],
       confidence: json?.confidence || 50,
     };
+  }
+
+  // ===========================================================================
+  // CALIBRATED ROUTING DIAGNOSTICS & ASYNC JEV HOOKS
+  // ===========================================================================
+
+  /**
+   * Return the most recent TypeSafe System One calibrated routing decision
+   * (including per-family probabilities, threshold bands, uncertainFamilies,
+   * truthTableRow, and serialized Jev request payload).
+   */
+  getLastRoutingDecision(): MissionRouteDecision | null {
+    return this.lastRoutingDecision;
+  }
+
+  /**
+   * Configure or clear the async MissionJudgmentProvider used by planOperation
+   * and routeDirectiveAsync.
+   */
+  setJudgmentProvider(provider?: MissionJudgmentProvider): void {
+    this.judgmentProvider = provider;
+  }
+
+  /**
+   * Synchronously evaluate a directive using the calibrated offline estimator
+   * + deterministic truth-table combiner without calling any network endpoint.
+   */
+  routeDirectiveOffline(
+    directive: Directive,
+    targets?: ReadonlyArray<Pick<OpPlanTarget, "address" | "expectedType">>,
+    planSummary?: string,
+  ): MissionRouteDecision {
+    const resolvedTargets =
+      targets ?? this.extractTargetsFromDirective(directive);
+    const decision = evaluateMissionRouteOffline({
+      directive,
+      planSummary,
+      targets: resolvedTargets,
+      sourceRoot:
+        this.configuredSourceRoot ?? process.env.T3MP3ST_SOURCE_ROOT ?? null,
+    });
+    this.lastRoutingDecision = decision;
+    this.emit("general:route_decision", { decision });
+    return decision;
+  }
+
+  /**
+   * Asynchronously evaluate a directive against an explicit caller-supplied
+   * MissionJudgmentProvider (e.g. HttpTypeSafeJudgmentProvider or mock) and
+   * combine the returned probabilities via the deterministic truth table.
+   * Surfaces TypeSafeRouterError directly—never swallows provider failures.
+   */
+  async routeDirectiveAsync(
+    directive: Directive,
+    provider?: MissionJudgmentProvider,
+    targets?: ReadonlyArray<Pick<OpPlanTarget, "address" | "expectedType">>,
+    planSummary?: string,
+  ): Promise<MissionRouteDecision> {
+    const activeProvider = provider ?? this.resolveActiveJudgmentProvider();
+    if (!activeProvider) {
+      throw new TypeSafeRouterError(
+        "INVALID_CONFIG",
+        "routeDirectiveAsync requires an explicit MissionJudgmentProvider or a configured TypeSafe API key.",
+      );
+    }
+    const resolvedTargets =
+      targets ?? this.extractTargetsFromDirective(directive);
+    const decision = await evaluateMissionRouteAsync(
+      {
+        directive,
+        planSummary,
+        targets: resolvedTargets,
+        sourceRoot:
+          this.configuredSourceRoot ?? process.env.T3MP3ST_SOURCE_ROOT ?? null,
+      },
+      activeProvider,
+    );
+    this.lastRoutingDecision = decision;
+    this.emit("general:route_decision", { decision });
+    return decision;
   }
 
   // ===========================================================================
