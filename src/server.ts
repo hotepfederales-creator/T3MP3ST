@@ -608,6 +608,7 @@ interface ParsedCommand {
 }
 
 const SHELL_META = /[|&;$<>`\\]/;
+// eslint-disable-next-line no-control-regex
 const COMMAND_CONTROL = /[\x00-\x1F\x7F-\x9F\u2028\u2029]/;
 const CURL_TRANSPORT_OVERRIDE_FLAGS = new Set([
   "--resolve",
@@ -10153,7 +10154,7 @@ function providerRunsKeyless(provider: string): boolean {
 
 function readPositiveTimeoutEnv(name: string): number | undefined {
   const raw = process.env[name];
-  if (raw == null || raw.trim() === "") return undefined;
+  if (raw === undefined || raw.trim() === "") return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
@@ -10880,7 +10881,9 @@ app.post(
 
       // Stop the outgoing General's monitor before dropping the reference (setInterval leak).
       if (activeGeneral) activeGeneral.stopMonitoring();
-      activeGeneral = new OpGeneral(generalLLM);
+      activeGeneral = new OpGeneral(generalLLM, {
+        sourceRoot: validSourceRoot ?? undefined,
+      });
 
       // Wire events
       activeGeneral.on("general:planning", (data) =>
@@ -10948,17 +10951,31 @@ app.post(
         generalConfig.baseUrl,
       );
 
-      if (validSourceRoot) {
-        process.env.T3MP3ST_SOURCE_ROOT = validSourceRoot;
-      }
-
       const isLocalCodeAudit =
         Boolean(validSourceRoot) || plan.missionFamily === "code_audit";
+      const withSourceRootMetadata = <
+        T extends { metadata?: Record<string, unknown> },
+      >(
+        targetObj: T,
+      ): T => {
+        if (!validSourceRoot) return targetObj;
+        return {
+          ...targetObj,
+          metadata: {
+            ...targetObj.metadata,
+            sourceRoot: validSourceRoot,
+          },
+        };
+      };
       for (const target of execConfig.targets) {
         if (target.startsWith("http://") || target.startsWith("https://")) {
-          cmd.targetEnv.addTarget(createTargetFromUrl(target));
+          cmd.targetEnv.addTarget(
+            withSourceRootMetadata(createTargetFromUrl(target)),
+          );
         } else if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(target)) {
-          cmd.targetEnv.addTarget(createTargetFromIP(target));
+          cmd.targetEnv.addTarget(
+            withSourceRootMetadata(createTargetFromIP(target)),
+          );
         } else if (isLocalCodeAudit) {
           cmd.targetEnv.addTarget({
             name: target,
@@ -10972,7 +10989,9 @@ app.post(
             },
           });
         } else {
-          cmd.targetEnv.addTarget(createTargetFromUrl(`http://${target}`));
+          cmd.targetEnv.addTarget(
+            withSourceRootMetadata(createTargetFromUrl(`http://${target}`)),
+          );
         }
       }
 

@@ -10,10 +10,29 @@
  *      so operators verify exploitability before filing to the findings ledger.
  */
 
-import { readFileSync, readdirSync, statSync } from "fs";
-import { basename, extname, join } from "path";
-import type { CustomTool, Severity, ToolFinding } from "../types/index.js";
-import { approvedLocalPath } from "./local-file-scope.js";
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  type Stats,
+} from "fs";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "path";
+import type {
+  CustomTool,
+  Severity,
+  ToolContext,
+  ToolFinding,
+} from "../types/index.js";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const SOURCE_EXTENSIONS = new Set([
@@ -240,6 +259,110 @@ function formatNumberedSlice(
   return out.join("\n");
 }
 
+export function isWithinCanonicalRoot(
+  realRoot: string,
+  realCandidate: string,
+): boolean {
+  const rel = relative(realRoot, realCandidate);
+  if (rel === "") return true;
+  if (rel === ".." || rel.startsWith(`..${sep}`) || rel.startsWith("../")) {
+    return false;
+  }
+  if (isAbsolute(rel)) return false;
+  return true;
+}
+
+function formatFsError(err: unknown): string {
+  if (err && typeof err === "object") {
+    const code = "code" in err && typeof err.code === "string" ? err.code : "";
+    const msg =
+      "message" in err && typeof err.message === "string" ? err.message : "";
+    if (code && msg) return `${code}: ${msg}`;
+    if (msg) return msg;
+    if (code) return code;
+  }
+  return String(err);
+}
+
+function resolveSourceRoot(context: ToolContext): string | null {
+  const metaRoot = context.target?.metadata?.sourceRoot;
+  if (typeof metaRoot === "string" && metaRoot.trim().length > 0) {
+    return metaRoot.trim();
+  }
+  const envRoot = process.env.T3MP3ST_SOURCE_ROOT?.trim();
+  return envRoot && envRoot.length > 0 ? envRoot : null;
+}
+
+type ApprovedPathResult =
+  | { ok: true; root: string; path: string; stat: Stats }
+  | { ok: false; error: string };
+
+function resolveApprovedPath(
+  tool: string,
+  configuredRoot: string,
+  requested: string,
+  allowDirectory: boolean,
+): ApprovedPathResult {
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(resolve(configuredRoot));
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${tool}: T3MP3ST_SOURCE_ROOT cannot be resolved (${formatFsError(err)})`,
+    };
+  }
+
+  const rawCandidate = isAbsolute(requested)
+    ? resolve(requested)
+    : resolve(realRoot, requested);
+
+  try {
+    lstatSync(rawCandidate);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${tool}: path cannot be resolved inside T3MP3ST_SOURCE_ROOT (${formatFsError(err)})`,
+    };
+  }
+
+  let realCandidate: string;
+  try {
+    realCandidate = realpathSync(rawCandidate);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${tool}: path cannot be resolved inside T3MP3ST_SOURCE_ROOT (${formatFsError(err)})`,
+    };
+  }
+
+  if (!isWithinCanonicalRoot(realRoot, realCandidate)) {
+    return {
+      ok: false,
+      error: `${tool}: path is outside T3MP3ST_SOURCE_ROOT`,
+    };
+  }
+
+  let stat: Stats;
+  try {
+    stat = statSync(realCandidate);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${tool}: path cannot be inspected inside T3MP3ST_SOURCE_ROOT (${formatFsError(err)})`,
+    };
+  }
+
+  if (!stat.isFile() && !(allowDirectory && stat.isDirectory())) {
+    return {
+      ok: false,
+      error: `${tool}: path must be ${allowDirectory ? "a regular file or directory" : "a regular file"}`,
+    };
+  }
+
+  return { ok: true, root: realRoot, path: realCandidate, stat };
+}
+
 export const codeAuditScanTool: CustomTool = {
   name: "code_audit_scan",
   description:
@@ -267,37 +390,118 @@ export const codeAuditScanTool: CustomTool = {
     },
   ],
   handler: async (context) => {
-    const requestedPath = String(context.parameters.path || ".").trim();
-    const approved = approvedLocalPath("code_audit_scan", requestedPath, true);
+    const rawPath = context.parameters.path;
+    const requestedPath =
+      typeof rawPath === "string" && rawPath.trim().length > 0
+        ? rawPath.trim()
+        : ".";
+    const configuredRoot = resolveSourceRoot(context);
+    if (!configuredRoot) {
+      return {
+        success: false,
+        error:
+          "code_audit_scan: T3MP3ST_SOURCE_ROOT must name the approved analysis root",
+      };
+    }
+
+    const approved = resolveApprovedPath(
+      "code_audit_scan",
+      configuredRoot,
+      requestedPath,
+      true,
+    );
     if (!approved.ok) {
       return { success: false, error: approved.error };
     }
 
-    const resolved = approved.path;
-    const st = statSync(resolved);
+    const { root: realRoot, path: resolved, stat: st } = approved;
 
     if (st.isDirectory()) {
-      const entries = readdirSync(resolved)
-        .filter((name) => {
-          try {
-            const full = join(resolved, name);
-            return (
-              statSync(full).isFile() &&
-              (SOURCE_EXTENSIONS.has(extname(name).toLowerCase()) ||
-                statSync(full).size <= 65536)
-            );
-          } catch {
-            return false;
-          }
-        })
-        .slice(0, 40);
+      let rawEntries: string[];
+      try {
+        rawEntries = readdirSync(resolved);
+      } catch (err) {
+        return {
+          success: false,
+          error: `code_audit_scan: failed to read directory (${formatFsError(err)})`,
+        };
+      }
+
+      const candidateFiles: Array<{
+        name: string;
+        realPath: string;
+        size: number;
+      }> = [];
+      const warnings: string[] = [];
+
+      for (const name of rawEntries) {
+        const entryPath = join(resolved, name);
+        let entryLstat: Stats;
+        try {
+          entryLstat = lstatSync(entryPath);
+        } catch (err) {
+          warnings.push(
+            `  - ${name} (skipped: unreadable entry — ${formatFsError(err)})`,
+          );
+          continue;
+        }
+
+        let realEntry: string;
+        try {
+          realEntry = realpathSync(entryPath);
+        } catch (err) {
+          warnings.push(
+            `  - ${name} (skipped: broken or unresolvable symlink/path — ${formatFsError(err)})`,
+          );
+          continue;
+        }
+
+        if (!isWithinCanonicalRoot(realRoot, realEntry)) {
+          warnings.push(
+            `  - ${name} (skipped: symlink target escapes T3MP3ST_SOURCE_ROOT)`,
+          );
+          continue;
+        }
+
+        let fstat: Stats;
+        try {
+          fstat = entryLstat.isSymbolicLink()
+            ? statSync(realEntry)
+            : entryLstat;
+        } catch (err) {
+          warnings.push(
+            `  - ${name} (skipped: cannot inspect entry — ${formatFsError(err)})`,
+          );
+          continue;
+        }
+
+        if (!fstat.isFile()) {
+          continue;
+        }
+        if (
+          !SOURCE_EXTENSIONS.has(extname(name).toLowerCase()) &&
+          fstat.size > 65536
+        ) {
+          continue;
+        }
+
+        candidateFiles.push({
+          name,
+          realPath: realEntry,
+          size: fstat.size,
+        });
+        if (candidateFiles.length >= 40) {
+          break;
+        }
+      }
 
       const findings: ToolFinding[] = [];
       const reportLines: string[] = [
-        `code_audit_scan directory ${resolved} (${entries.length} candidate file(s)):`,
+        `code_audit_scan directory ${resolved} (${candidateFiles.length} candidate file(s)):`,
       ];
 
-      for (const name of entries) {
+      for (const entry of candidateFiles) {
+        const { name, realPath, size } = entry;
         if (
           name.endsWith(".yaml") ||
           name.endsWith(".yml") ||
@@ -305,10 +509,18 @@ export const codeAuditScanTool: CustomTool = {
         ) {
           continue;
         }
-        const full = join(resolved, name);
-        const fstat = statSync(full);
-        if (fstat.size > MAX_FILE_BYTES) continue;
-        const content = readFileSync(full, "utf8");
+        if (size > MAX_FILE_BYTES) continue;
+
+        let content: string;
+        try {
+          content = readFileSync(realPath, "utf8");
+        } catch (err) {
+          warnings.push(
+            `  - ${name} (skipped: read failed — ${formatFsError(err)})`,
+          );
+          continue;
+        }
+
         const hits = scanSourceText(content);
         const unguarded = hits.filter((h) => !h.guarded);
         reportLines.push(
@@ -327,6 +539,10 @@ export const codeAuditScanTool: CustomTool = {
         }
       }
 
+      if (warnings.length > 0) {
+        reportLines.push("Warnings:", ...warnings);
+      }
+
       return {
         success: true,
         output: reportLines.join("\n"),
@@ -341,7 +557,15 @@ export const codeAuditScanTool: CustomTool = {
       };
     }
 
-    const text = readFileSync(resolved, "utf8");
+    let text: string;
+    try {
+      text = readFileSync(resolved, "utf8");
+    } catch (err) {
+      return {
+        success: false,
+        error: `code_audit_scan: failed to read file (${formatFsError(err)})`,
+      };
+    }
     const lines = text.split(/\r?\n/);
     const fileLabel = basename(resolved);
     const hits = scanSourceText(text);
@@ -351,10 +575,12 @@ export const codeAuditScanTool: CustomTool = {
     const startLineRaw = Number(context.parameters.start_line);
     const endLineRaw = Number(context.parameters.end_line);
     const startLine =
-      Number.isFinite(startLineRaw) && startLineRaw > 0 ? startLineRaw : 1;
+      Number.isFinite(startLineRaw) && startLineRaw > 0
+        ? Math.floor(startLineRaw)
+        : 1;
     const endLine =
       Number.isFinite(endLineRaw) && endLineRaw >= startLine
-        ? Math.min(lines.length, endLineRaw)
+        ? Math.min(lines.length, Math.floor(endLineRaw))
         : Math.min(lines.length, startLine + 119);
 
     const outSections: string[] = [
