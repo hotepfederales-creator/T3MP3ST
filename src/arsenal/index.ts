@@ -33,6 +33,20 @@ import { kevCheckTool } from "./kev.js";
 import { binarySinkScanTool } from "./binary.js";
 import { codeAuditScanTool } from "./code-audit.js";
 import { r2AnalyzeTool } from "./r2-analyze.js";
+import { reapPlaybookTool } from "./reap-playbooks.js";
+export {
+  REAP_PLAYBOOKS,
+  selectReapPlaybooks,
+  getReapPlaybookById,
+  reapPlaybookTool,
+  type ReapPlaybook,
+  type ReapPlaybookMatch,
+  type ReapPromptTemplate,
+  type ReapSelectionQuery,
+  type ReapSelectionResult,
+  type ReapTargetFormat,
+  type ReapObjective,
+} from "./reap-playbooks.js";
 
 const execFileAsync = promisify(execFile);
 import type {
@@ -750,6 +764,7 @@ export const BUILTIN_TOOLS: CustomTool[] = [
   binarySinkScanTool,
   codeAuditScanTool,
   r2AnalyzeTool,
+  reapPlaybookTool,
   // =============================================================================
   // RECONNAISSANCE TOOLS
   // =============================================================================

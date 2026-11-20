@@ -1,4 +1,18 @@
 import type { MissionFamily } from "../resources/index.js";
+import { REAP_PLAYBOOKS } from "./reap-playbooks.js";
+export {
+  REAP_PLAYBOOKS,
+  selectReapPlaybooks,
+  getReapPlaybookById,
+  reapPlaybookTool,
+  type ReapPlaybook,
+  type ReapPlaybookMatch,
+  type ReapPromptTemplate,
+  type ReapSelectionQuery,
+  type ReapSelectionResult,
+  type ReapTargetFormat,
+  type ReapObjective,
+} from "./reap-playbooks.js";
 
 export type ToolCategory =
   | "core"
@@ -1452,5 +1466,6 @@ export function summarizeToolCatalog(
     byExecution,
     byRisk,
     byCategory,
+    reapPlaybooks: REAP_PLAYBOOKS.length,
   };
 }

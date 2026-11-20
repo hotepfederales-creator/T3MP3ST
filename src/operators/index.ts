@@ -167,6 +167,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
     primaryPhases: [KillChainPhase.WEAPONIZE],
     defaultTools: [
       "r2_analyze",
+      "reap_playbook",
       "binary_sink_scan",
       "code_audit_scan",
       "semgrep_tool",
@@ -341,6 +342,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
     defaultTools: [
       "code_audit_scan",
       "binary_sink_scan",
+      "reap_playbook",
       "semgrep_tool",
       "cve_lookup",
       "technology_detect",
@@ -375,6 +377,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
     defaultTools: [
       "code_audit_scan",
       "binary_sink_scan",
+      "reap_playbook",
       "semgrep_tool",
       "cve_lookup",
       "jwt_decode",
