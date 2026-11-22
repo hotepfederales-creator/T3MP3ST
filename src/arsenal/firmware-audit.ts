@@ -223,7 +223,7 @@ export function redactFirmwareEvidence(raw: string, maxLen = 180): string {
       "$1 [redacted]",
     )
     .replace(
-      /\b(wpa[_-]?psk|wifi[_-]?pass(?:word)?|mqtt[_-]?pass(?:word)?|root[_-]?pass(?:word)?|admin[_-]?pass(?:word)?|passphrase|psk|passwd|pwd|password|api[_-]?key|auth[_-]?token|access[_-]?token|secret[_-]?key|client[_-]?secret|private[_-]?key|jwt[_-]?secret)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;#}"']+)/gi,
+      /\b(wpa[_-]?psk|wifi[_-]?pass(?:word)?|mqtt[_-]?(?:tls[_-]?)?(?:pass(?:word)?|key|secret)|tls[_-]?(?:private[_-]?)?key|root[_-]?pass(?:word)?|admin[_-]?pass(?:word)?|passphrase|psk|passwd|pwd|password|api[_-]?key|auth[_-]?token|access[_-]?token|secret[_-]?key|client[_-]?secret|private[_-]?key|jwt[_-]?secret)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;#}"']+)/gi,
       "$1$2[redacted]",
     )
     .replace(
@@ -1245,7 +1245,7 @@ const EMBEDDED_CREDENTIAL_PATTERNS: ReadonlyArray<{
     label: "Hardcoded firmware credential, PSK, or API secret",
     severity: "high",
     cvssWeight: 8.6,
-    re: /\b(?:wpa[_-]?psk|wifi[_-]?pass(?:word)?|mqtt[_-]?pass(?:word)?|root[_-]?pass(?:word)?|admin[_-]?pass(?:word)?|passphrase|psk|passwd|password|api[_-]?key|auth[_-]?token|secret[_-]?key|jwt[_-]?secret)\s*[:=]\s*["']?[^\s,;#}"']{4,}["']?/i,
+    re: /\b(?:wpa[_-]?psk|wifi[_-]?pass(?:word)?|mqtt[_-]?(?:tls[_-]?)?(?:pass(?:word)?|key|secret)|tls[_-]?(?:private[_-]?)?key|root[_-]?pass(?:word)?|admin[_-]?pass(?:word)?|passphrase|psk|passwd|password|api[_-]?key|auth[_-]?token|secret[_-]?key|private[_-]?key|jwt[_-]?secret)\s*[:=]\s*(?!["']?(?:none|null|false|disabled|\[?redacted\]?)\b)["']?[^\s,;#}"']{4,}["']?/i,
   },
 ];
 
@@ -1459,10 +1459,17 @@ export function scanDeviceTreeSource(dtsText: string): FirmwareAuditFinding[] {
     }
 
     // Check embedded U-Boot bootcmd / tftpboot properties inside DTS/FIT .its/.dts files
+    // Extract the quoted RHS property string (or strip the DTS statement-terminating ';')
+    // so benign single-command properties like `u-boot,bootcmd = "bootm 0x82000000";`
+    // do not false-positive on the trailing DTS semicolon.
     if (/\b(?:bootcmd|u-boot,bootcmd|altbootcmd)\s*=/.test(trimmed)) {
+      const quotedRhs = trimmed.match(/=\s*"([^"]*)"/);
+      const bootcmdBody = quotedRhs
+        ? quotedRhs[1]
+        : trimmed.replace(/;\s*$/, "");
       if (
-        /\b(?:tftpboot|tftp|dhcp|nfs)\b|[;&|`]|(?:\$\()|\binit=\/bin\/(?:sh|bash|ash)\b/i.test(
-          trimmed,
+        /\b(?:tftpboot|tftp|dhcp|nfs|pxe|usbboot)\b|[;&|`]|(?:\$\()|\binit=\/bin\/(?:sh|bash|ash)\b/i.test(
+          bootcmdBody,
         )
       ) {
         findings.push({
@@ -1482,8 +1489,10 @@ export function scanDeviceTreeSource(dtsText: string): FirmwareAuditFinding[] {
       }
     }
 
-    // Check bootdelay in DTS config node
-    const dtsDelay = trimmed.match(/\bbootdelay\s*=\s*(?:<(-?\d+)>|"(-?\d+)")/i);
+    // Check bootdelay in DTS config node (supports <-2>, <(-2)>, and "-2")
+    const dtsDelay = trimmed.match(
+      /\bbootdelay\s*=\s*(?:<(?:\(\s*)?(-?\d+)(?:\s*\))?>|"(-?\d+)")/i,
+    );
     if (dtsDelay) {
       const val = parseInt(dtsDelay[1] ?? dtsDelay[2], 10);
       if (val > 0 || val === -1) {
@@ -1520,7 +1529,7 @@ export function scanDeviceTreeSource(dtsText: string): FirmwareAuditFinding[] {
       const labelMatch = blockText.match(
         /\blabel\s*=\s*"(u-boot(?:-env)?|bootloader|factory|art|uboot-env)"/i,
       );
-      if (labelMatch && !/\bread-only\s*;/.test(blockText)) {
+      if (labelMatch && !/\b(?:read-only|lock)\s*;/.test(blockText)) {
         findings.push({
           ruleId: "FW-DTS-WRITABLE-BOOT-PARTITION",
           vulnClass: "writable_boot_partition",
@@ -1759,7 +1768,7 @@ const HARDWARE_INTERFACE_SPECS: readonly HardwareRuleSpec[] = [
     signalRe:
       /(?:^|[/._-])(?:SPI_FLASH\w*|QSPI_FLASH\w*|FLASH_(?:CS|CLK|SCK|MOSI|MISO|IO\d)|SOIC8)(?:$|[/._0-9-])/i,
     componentValueOrFpRe:
-      /\b(?:SPI[_-]?FLASH|SOIC-?8|W25Q\d+\w*|MX25L\d+\w*|GD25Q\d+\w*|SST25\w*)\b/i,
+      /\b(?:(?:SPI|NOR|QSPI|SERIAL)[_-]?FLASH|FLASH[_-]?SOIC-?8|SOIC-?8[_-]?FLASH|W25Q\d+\w*|MX25L\d+\w*|GD25Q\d+\w*|SST25\w*|IS25\w*|AT25(?:DF|SF|SL|XE)\w*|S25FL\w*)\b/i,
     allowIcRef: true,
     remediation:
       "Encrypt external SPI flash contents with per-device hardware keys, verify boot integrity before execution, and guard flash status registers with WP#.",
