@@ -170,6 +170,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
       "reap_playbook",
       "binary_sink_scan",
       "code_audit_scan",
+      "firmware_audit_scan",
       "semgrep_tool",
       "kev_check",
       "idor_probe",
@@ -341,6 +342,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
     primaryPhases: [KillChainPhase.C2],
     defaultTools: [
       "code_audit_scan",
+      "firmware_audit_scan",
       "binary_sink_scan",
       "reap_playbook",
       "semgrep_tool",
@@ -376,6 +378,7 @@ export const ARCHETYPE_PROFILES: Record<OperatorArchetype, ArchetypeProfile> = {
     primaryPhases: [KillChainPhase.ACTIONS],
     defaultTools: [
       "code_audit_scan",
+      "firmware_audit_scan",
       "binary_sink_scan",
       "reap_playbook",
       "semgrep_tool",

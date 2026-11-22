@@ -1185,6 +1185,14 @@ Return only a valid JSON object wrapped in a json code block. Keep it compact, c
     if (family === "code_audit") {
       return ["code_audit_scan", "binary_sink_scan", ...adapterIds].slice(0, 5);
     }
+    if (family === "reverse_binary") {
+      return [
+        "firmware_audit_scan",
+        "binary_sink_scan",
+        "reap_playbook",
+        ...adapterIds,
+      ].slice(0, 5);
+    }
     return adapterIds.slice(0, 5);
   }
 

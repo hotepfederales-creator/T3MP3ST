@@ -32,8 +32,35 @@ import { jsAnalyzeTool } from "./js-analyze.js";
 import { kevCheckTool } from "./kev.js";
 import { binarySinkScanTool } from "./binary.js";
 import { codeAuditScanTool } from "./code-audit.js";
+import { firmwareAuditScanTool } from "./firmware-audit.js";
 import { r2AnalyzeTool } from "./r2-analyze.js";
 import { reapPlaybookTool } from "./reap-playbooks.js";
+export {
+  DEFAULT_MAX_FIRMWARE_BYTES,
+  firmwareAuditScanTool,
+  analyzeFirmwareBuffer,
+  decodeIntelHex,
+  decodeMotorolaSrec,
+  parseElfMetadata,
+  scanBinaryContainerSignatures,
+  scanDeviceTreeSource,
+  scanKicadEda,
+  coalesceMemorySegments,
+  extractPositionedStrings,
+  redactFirmwareEvidence,
+  formatHexAddress,
+  type FirmwareArtifactFormat,
+  type FirmwareAuditFinding,
+  type FirmwareAuditReport,
+  type HexDecodeResult,
+  type ElfMetadata,
+  type ElfLoadSegmentInfo,
+  type KicadDebugInterfaceHit,
+  type MemorySegment,
+  type PositionedString,
+  type ReapFirmwarePlaybookSkill,
+  type UBootContainerHit,
+} from "./firmware-audit.js";
 export {
   REAP_PLAYBOOKS,
   selectReapPlaybooks,
@@ -763,6 +790,7 @@ export const BUILTIN_TOOLS: CustomTool[] = [
   kevCheckTool,
   binarySinkScanTool,
   codeAuditScanTool,
+  firmwareAuditScanTool,
   r2AnalyzeTool,
   reapPlaybookTool,
   // =============================================================================

@@ -182,7 +182,7 @@ export const MISSION_ROUTER_QUESTIONS: MissionRouterQuestionRegistry = {
       cryptographic_material:
         "A cryptographic protocol, cipher/signature implementation, JWT signing verification path, or secret/key store.",
       compiled_artifact:
-        "A compiled ELF/PE/Mach-O executable, firmware image, Android APK, or binary exploitation target.",
+        "A compiled ELF/PE/Mach-O executable, Intel HEX/Motorola S-Record/U-Boot/Device-Tree firmware image, KiCad hardware EDA schematic/PCB debug surface, Android APK, or binary exploitation target.",
       public_identity_surface:
         "Publicly exposed organization footprint, domain/identity attribution records, or authorized phishing simulation scope.",
       governance_artifact:
@@ -264,10 +264,10 @@ export const MISSION_ROUTER_QUESTIONS: MissionRouterQuestionRegistry = {
       id: "family_reverse_binary",
       kind: "noul",
       question:
-        "Does `directive` or `targets` involve reverse engineering compiled binaries, firmware images, mobile APKs, or native memory-corruption exploits?",
+        "Does `directive` or `targets` involve reverse engineering compiled binaries, embedded firmware images, hardware EDA debug attack surfaces, mobile APKs, or native memory-corruption exploits?",
       criteria: {
-        yes: "Targets include ELF/PE/Mach-O binaries, `.apk`/`.ipa` packages, embedded firmware blobs, disassembly/decompilation, format-string bugs, buffer overflows, or ROP/heap exploitation.",
-        no: "The scope consists solely of interpreted web apps, TypeScript/Python source repositories, or cloud IAM configurations with no compiled binary or firmware artifact.",
+        yes: "Targets include ELF/PE/Mach-O binaries, `.apk`/`.ipa` packages, Intel HEX/Motorola S-Record/U-Boot/Device-Tree firmware blobs, KiCad `.kicad_sch`/`.kicad_pcb` JTAG/SWD/UART/SPI hardware debug surfaces, disassembly/decompilation, format-string bugs, buffer overflows, or ROP/heap exploitation.",
+        no: "The scope consists solely of interpreted web apps, TypeScript/Python source repositories, or cloud IAM configurations with no compiled binary, firmware, or hardware debug artifact.",
       },
     },
     agent_warfare: {
@@ -383,9 +383,7 @@ export interface MissionJudgmentVector {
   familyProbabilities: Readonly<Record<MissionFamily, number>>;
   /** Source of the judgments for auditability. */
   providerSource:
-    | "typesafe_jev_http"
-    | "offline_calibrated_estimator"
-    | "custom";
+    "typesafe_jev_http" | "offline_calibrated_estimator" | "custom";
   /** Versioned model identifier returned by the live TypeSafe API (e.g. `jev-1.14.0`). */
   resolvedModel?: string;
   /** Token usage reported by the live TypeSafe API. */
@@ -608,10 +606,17 @@ export function inferTargetArtifactKind(
   }
 
   if (
-    /\.(elf|exe|dll|so|dylib|apk|ipa|bin|fw|img|rom)$/i.test(lowAddr) ||
+    /\.(elf|exe|dll|so|dylib|apk|ipa|bin|fw|img|rom|hex|ihex|srec|s19|s28|s37|mot|uf2|uimage|itb|dtb|dts|dtsi|kicad_sch|kicad_pcb)$/i.test(
+      lowAddr,
+    ) ||
     lowType.includes("binary") ||
     lowType.includes("firmware") ||
-    lowType.includes("mobile")
+    lowType.includes("mobile") ||
+    lowType.includes("hardware") ||
+    lowType.includes("eda") ||
+    lowType.includes("pcb") ||
+    lowType.includes("iot") ||
+    lowType.includes("embedded")
   ) {
     return "binary";
   }
@@ -1455,6 +1460,11 @@ const FAMILY_EVIDENCE_MODELS: Readonly<
       },
       {
         pattern:
+          /\b(firmware_audit_scan|intel\s*hex|ihex\b|s-?record|srec\b|u-?boot|uimage\b|bootcmd\b|tftpboot\b|device[\s-]*tree|\.dtsi?\b|\.hex\b|\.s19\b|\.mot\b|kicad|\.kicad_(?:sch|pcb)\b|jtag\b|swd\b|swdio\b|swclk\b|uart\s*(?:debug|console|header|txd|rxd)|spi[_\s-]*flash|soic-?8\b|boot0\b|boot_sel\b|pcb\s*(?:debug|attack|audit)|hardware\s*(?:debug|attack\s*surface|security\s*audit))\b/i,
+        weight: 3.8,
+      },
+      {
+        pattern:
           /\b(buffer\s*overflow|format\s*string|use[\s-]*after[\s-]*free|heap\s*exploitation|rop\s*chain|shellcode|binary\s*(?:pwn|exploit|sink))\b/i,
         weight: 3.5,
       },
@@ -2022,4 +2032,53 @@ export async function evaluateMissionRouteAsync(
   const requestPayload = buildTypeSafeMissionRequestPayload(state);
   const judgments = await provider.evaluate(state);
   return combineMissionRouteFromJudgments(judgments, { requestPayload });
+}
+
+/**
+ * Deterministically map a calibrated `MissionRouteDecision` (and optional
+ * `MissionRoutingState`) to the primary built-in Arsenal scanners for execution.
+ */
+export function recommendToolsForMissionRoute(
+  decision: MissionRouteDecision,
+  state?: MissionRoutingState,
+): string[] {
+  const tools = new Set<string>();
+
+  for (const family of decision.selectedFamilies) {
+    if (family === "reverse_binary") {
+      tools.add("firmware_audit_scan");
+      tools.add("binary_sink_scan");
+      tools.add("reap_playbook");
+      tools.add("r2_analyze");
+    } else if (family === "code_audit") {
+      tools.add("code_audit_scan");
+      tools.add("binary_sink_scan");
+    } else if (family === "crypto_secrets") {
+      tools.add("firmware_audit_scan");
+      tools.add("jwt_decode");
+    } else if (family === "web_api") {
+      tools.add("http_request");
+      tools.add("header_analysis");
+      tools.add("js_analyze");
+    } else if (family === "reporting_remediation") {
+      tools.add("kev_check");
+      tools.add("cve_lookup");
+    }
+  }
+
+  if (
+    state &&
+    state.targets.some((t) =>
+      /\.(hex|ihex|srec|s19|s28|s37|mot|dts|dtsi|dtb|uimage|itb|kicad_sch|kicad_pcb)$/i.test(
+        t.address,
+      ),
+    )
+  ) {
+    return [
+      "firmware_audit_scan",
+      ...Array.from(tools).filter((t) => t !== "firmware_audit_scan"),
+    ];
+  }
+
+  return Array.from(tools);
 }

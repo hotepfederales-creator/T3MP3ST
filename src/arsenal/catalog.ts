@@ -13,6 +13,32 @@ export {
   type ReapTargetFormat,
   type ReapObjective,
 } from "./reap-playbooks.js";
+export {
+  DEFAULT_MAX_FIRMWARE_BYTES,
+  firmwareAuditScanTool,
+  analyzeFirmwareBuffer,
+  decodeIntelHex,
+  decodeMotorolaSrec,
+  parseElfMetadata,
+  scanBinaryContainerSignatures,
+  scanDeviceTreeSource,
+  scanKicadEda,
+  coalesceMemorySegments,
+  extractPositionedStrings,
+  redactFirmwareEvidence,
+  formatHexAddress,
+  type FirmwareArtifactFormat,
+  type FirmwareAuditFinding,
+  type FirmwareAuditReport,
+  type HexDecodeResult,
+  type ElfMetadata,
+  type ElfLoadSegmentInfo,
+  type KicadDebugInterfaceHit,
+  type MemorySegment,
+  type PositionedString,
+  type ReapFirmwarePlaybookSkill,
+  type UBootContainerHit,
+} from "./firmware-audit.js";
 
 export type ToolCategory =
   | "core"

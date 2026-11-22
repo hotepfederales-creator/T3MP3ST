@@ -453,7 +453,16 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
     category: "vuln",
     summary:
       "Trust-boundary audits, untrusted source-to-sink tracing, 1-day patch diffing for incomplete fixes, and root-cause crash triage.",
-    targetFormats: ["pe", "elf", "macho", "firmware", "apk", "electron", "driver", "go_rust"],
+    targetFormats: [
+      "pe",
+      "elf",
+      "macho",
+      "firmware",
+      "apk",
+      "electron",
+      "driver",
+      "go_rust",
+    ],
     objectives: ["vuln", "diff", "trace"],
     keywords: [
       "vulnerability",
@@ -583,6 +592,54 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
     staticFirst: true,
   },
   {
+    id: "reap-13",
+    skillName: "reap-13-dma-and-hardware-assisted-cheat-research-defensive",
+    title: "DMA & Hardware-Assisted Interface Research (Defensive)",
+    category: "hardware",
+    summary:
+      "Defensive analysis of PCIe/DMA memory-access protections (IOMMU/VT-d, BAR mappings), FPGA/MCU bus firmware, and exposed hardware debug/bus attack surfaces (JTAG, SWD, UART, SPI flash).",
+    targetFormats: ["firmware", "driver", "pe", "elf"],
+    objectives: ["kernel", "explore", "vuln"],
+    keywords: [
+      "dma",
+      "pcie",
+      "iommu",
+      "vt-d",
+      "thunderbolt",
+      "bar",
+      "fpga",
+      "jtag",
+      "swd",
+      "kicad",
+      "hardware-assisted",
+    ],
+    reaToolPipeline: [
+      "rea.open_target",
+      "rea.triage_binary",
+      "rea.scan_firmware_partitions",
+      "rea.find_xrefs",
+      "rea.decompile_function",
+    ],
+    evidenceChecklist: [
+      ...CORE_EVIDENCE_RULES,
+      "Document IOMMU/VT-d protection checks, PCIe BAR mappings, and physical debug/bus interfaces with concrete offsets or net designators.",
+      "Restrict strictly to owned lab hardware, defensive posture assessment, and authorized firmware dumps.",
+    ],
+    promptTemplates: [
+      {
+        name: "Platform DMA & IOMMU protection audit",
+        template:
+          "Use REA on <AUTHORIZED DRIVER OR FIRMWARE> in my lab. Explain with function/address evidence how external PCIe/DMA memory access is restricted (IOMMU/VT-d mappings, BAR regions, root-port checks) and which checks are load-bearing vs cosmetic.",
+      },
+      {
+        name: "FPGA/MCU device firmware & hardware bus study",
+        template:
+          "Use REA on <OWNED DEVICE FIRMWARE / HARDWARE ARTIFACT>. Identify the MCU/FPGA architecture, exposed debug/bus interfaces (JTAG, SWD, UART, SPI, I2C, PCIe), host protocol handlers, and memory-read primitives with proving addresses.",
+      },
+    ],
+    staticFirst: true,
+  },
+  {
     id: "reap-15",
     skillName: "reap-15-version-comparison-and-crash-work",
     title: "Version Comparison & Crash Analysis",
@@ -636,7 +693,17 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
     category: "methodology",
     summary:
       "Maintain persistent INVESTIGATION.md ledgers, audit residual unknowns, prune discarded hypotheses, and prioritize uncertainty-reducing next steps.",
-    targetFormats: ["pe", "elf", "macho", "firmware", "apk", "electron", "driver", "go_rust", "diff"],
+    targetFormats: [
+      "pe",
+      "elf",
+      "macho",
+      "firmware",
+      "apk",
+      "electron",
+      "driver",
+      "go_rust",
+      "diff",
+    ],
     objectives: ["explore", "trace", "vuln", "reconstruct"],
     keywords: [
       "investigation",
@@ -971,7 +1038,20 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
     category: "general",
     summary:
       "Universal static-first starter prompt for any unfamiliar target: verify available tools, trace one feature, separate facts from hypotheses, and emit a spec + test plan.",
-    targetFormats: ["pe", "elf", "macho", "firmware", "apk", "electron", "js", "wasm", "driver", "go_rust", "crash", "diff"],
+    targetFormats: [
+      "pe",
+      "elf",
+      "macho",
+      "firmware",
+      "apk",
+      "electron",
+      "js",
+      "wasm",
+      "driver",
+      "go_rust",
+      "crash",
+      "diff",
+    ],
     objectives: ["explore", "trace", "vuln", "clone", "reconstruct"],
     keywords: ["wildcard", "start", "general", "unknown", "any", "unfamiliar"],
     reaToolPipeline: [
@@ -1002,13 +1082,30 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
     category: "methodology",
     summary:
       "Six rules that make RE agent prompts reliable: one feature per prompt, mandatory address evidence, fact/inference/unknown buckets, static-first, concrete deliverables, and explicit scope.",
-    targetFormats: ["pe", "elf", "macho", "firmware", "apk", "electron", "js", "wasm", "driver", "go_rust", "crash", "diff"],
-    objectives: ["explore", "trace", "reconstruct"],
-    keywords: ["prompt", "tips", "craft", "methodology", "discipline", "evidence"],
-    reaToolPipeline: [
-      "rea.list_capabilities",
-      "rea.audit_residual_unknowns",
+    targetFormats: [
+      "pe",
+      "elf",
+      "macho",
+      "firmware",
+      "apk",
+      "electron",
+      "js",
+      "wasm",
+      "driver",
+      "go_rust",
+      "crash",
+      "diff",
     ],
+    objectives: ["explore", "trace", "reconstruct"],
+    keywords: [
+      "prompt",
+      "tips",
+      "craft",
+      "methodology",
+      "discipline",
+      "evidence",
+    ],
+    reaToolPipeline: ["rea.list_capabilities", "rea.audit_residual_unknowns"],
     evidenceChecklist: [
       "Scope each request to one feature rather than asking to explain the entire application.",
       "Require file/function/address evidence for every claim to prevent confabulation.",
@@ -1028,13 +1125,19 @@ export const REAP_PLAYBOOKS: readonly ReapPlaybook[] = [
 
 const FORMAT_ALIASES: ReadonlyArray<readonly [RegExp, ReapTargetFormat]> = [
   [/\b(go_rust|golang|go\b|rust|pclntab|cargo)\b/i, "go_rust"],
-  [/\b(firmware|embedded|squashfs|jffs2|ubi|uboot|rtos|iot|binwalk|\.img|\.bin)\b/i, "firmware"],
+  [
+    /\b(firmware|embedded|squashfs|jffs2|ubi|uboot|u-boot|rtos|iot|binwalk|ihex|srec|s-record|kicad|jtag|swd|eda|\.img|\.bin|\.hex|\.ihex|\.srec|\.s19|\.mot|\.dts|\.dtsi|\.kicad_sch|\.kicad_pcb)\b/i,
+    "firmware",
+  ],
   [/\b(apk|android|dex|smali|jadx|jni|aab)\b/i, "apk"],
   [/\b(electron|asar|ipcmain|contextbridge)\b/i, "electron"],
   [/\b(wasm|webassembly|emscripten)\b/i, "wasm"],
   [/\b(driver|kernel|ntoskrnl|ioctl|byovd|lkm|\.sys|\.ko)\b/i, "driver"],
   [/\b(crash|minidump|coredump|stack\s*trace|segfault|dump)\b/i, "crash"],
-  [/\b(diff|patch\s*diff|version\s*compar|compare\s*version|v1.*v2|upgrade)\b/i, "diff"],
+  [
+    /\b(diff|patch\s*diff|version\s*compar|compare\s*version|v1.*v2|upgrade)\b/i,
+    "diff",
+  ],
   [/\b(js|javascript|typescript|node|webpack|bundle)\b/i, "js"],
   [/\b(macho|mach-o|dylib|macos|ios)\b/i, "macho"],
   [/\b(elf|\.so\b|linux)\b/i, "elf"],
@@ -1042,12 +1145,24 @@ const FORMAT_ALIASES: ReadonlyArray<readonly [RegExp, ReapTargetFormat]> = [
 ];
 
 const OBJECTIVE_ALIASES: ReadonlyArray<readonly [RegExp, ReapObjective]> = [
-  [/\b(malware|ransomware|c2|beacon|dropper|loader|ioc|yara|trojan|wiper)\b/i, "malware"],
-  [/\b(deobfuscat\w*|obfuscat\w*|unpack\w*|packer|protector|cff|flattening|vmprotect|themida|anti-cheat|opaque)\b/i, "deobfuscate"],
+  [
+    /\b(malware|ransomware|c2|beacon|dropper|loader|ioc|yara|trojan|wiper)\b/i,
+    "malware",
+  ],
+  [
+    /\b(deobfuscat\w*|obfuscat\w*|unpack\w*|packer|protector|cff|flattening|vmprotect|themida|anti-cheat|opaque)\b/i,
+    "deobfuscate",
+  ],
   [/\b(kernel|driver|ioctl|byovd|ssdt|uaf|toctou|minifilter)\b/i, "kernel"],
-  [/\b(vuln\w*|cve|sink|taint|audit|trust[- ]boundary|exploit\w*|security|1-day)\b/i, "vuln"],
+  [
+    /\b(vuln\w*|cve|sink|taint|audit|trust[- ]boundary|exploit\w*|security|1-day)\b/i,
+    "vuln",
+  ],
   [/\b(diff|compar\w*|patch|regression|crash|root[- ]cause)\b/i, "diff"],
-  [/\b(reconstruct\w*|obligation|abi|protocol|state[- ]machine|port|wasm|recovery|source[- ]recovery)\b/i, "reconstruct"],
+  [
+    /\b(reconstruct\w*|obligation|abi|protocol|state[- ]machine|port|wasm|recovery|source[- ]recovery)\b/i,
+    "reconstruct",
+  ],
   [/\b(clone|clean[- ]room|reimplement\w*|parity|spec)\b/i, "clone"],
   [/\b(trace|feature|button|workflow|flow|rule)\b/i, "trace"],
   [/\b(explore|triage|map|understand|imports|strings|overview)\b/i, "explore"],
@@ -1148,10 +1263,7 @@ export function selectReapPlaybooks(
 
     if (normalizedFormat && playbook.targetFormats.includes(normalizedFormat)) {
       // Reward specialist playbooks that tightly target this format over catch-alls.
-      const specificityBonus = Math.max(
-        0,
-        12 - playbook.targetFormats.length,
-      );
+      const specificityBonus = Math.max(0, 12 - playbook.targetFormats.length);
       score += 30 + specificityBonus;
       matchedFactors.push(`format:${normalizedFormat}`);
     }
@@ -1174,7 +1286,8 @@ export function selectReapPlaybooks(
       score = Math.max(0, score - 25);
     }
 
-    const haystack = `${playbook.title} ${playbook.summary} ${playbook.category}`.toLowerCase();
+    const haystack =
+      `${playbook.title} ${playbook.summary} ${playbook.category}`.toLowerCase();
     const matchedKeywords = new Set<string>();
     for (const token of tokens) {
       if (playbook.keywords.some((kw) => kw.toLowerCase().includes(token))) {
